@@ -36,4 +36,6 @@ export enum PerformanceTimingNames {
   SECURE_CONNECTION_START = 'secureConnectionStart',
   UNLOAD_EVENT_END = 'unloadEventEnd',
   UNLOAD_EVENT_START = 'unloadEventStart',
+  FIRST_PAINT = 'firstPaint',
+  FIRST_CONTENTFUL_PAINT = 'firstContentfulPaint',
 }
