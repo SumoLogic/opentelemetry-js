@@ -27,12 +27,8 @@ import { getEnv, baggageUtils } from '@opentelemetry/core';
  */
 export abstract class OTLPExporterBrowserBase<
   ExportItem,
-  ServiceRequest
-  > extends OTLPExporterBase<
-  OTLPExporterConfigBase,
-  ExportItem,
-  ServiceRequest
-  > {
+  ServiceRequest,
+> extends OTLPExporterBase<OTLPExporterConfigBase, ExportItem, ServiceRequest> {
   protected _headers: Record<string, string>;
   private _useXHR: boolean = false;
 
@@ -48,8 +44,8 @@ export abstract class OTLPExporterBrowserBase<
         {},
         parseHeaders(config.headers),
         baggageUtils.parseKeyPairsIntoRecord(
-          getEnv().OTEL_EXPORTER_OTLP_HEADERS
-        )
+          getEnv().OTEL_EXPORTER_OTLP_HEADERS,
+        ),
       );
     } else {
       this._headers = {};
@@ -67,7 +63,7 @@ export abstract class OTLPExporterBrowserBase<
   send(
     items: ExportItem[],
     onSuccess: () => void,
-    onError: (error: otlpTypes.OTLPExporterError) => void
+    onError: (error: otlpTypes.OTLPExporterError) => void,
   ): void {
     if (this._shutdownOnce.isCalled) {
       diag.debug('Shutdown already started. Cannot send objects');
@@ -77,13 +73,20 @@ export abstract class OTLPExporterBrowserBase<
     const body = JSON.stringify(serviceRequest);
 
     const promise = new Promise<void>((resolve, reject) => {
-      if (this._useXHR) {
-        sendWithXhr(body, this.url, this._headers, this.timeoutMillis, resolve, reject);
-      } else {
-        sendWithBeacon(body, this.url, { type: 'application/json' }, resolve, reject);
+      if (
+        this._useXHR ||
+        !sendWithBeacon(body, this.url, { type: 'application/json' })
+      ) {
+        sendWithXhr(
+          body,
+          this.url,
+          this._headers,
+          this.timeoutMillis,
+          resolve,
+          reject,
+        );
       }
-    })
-      .then(onSuccess, onError);
+    }).then(onSuccess, onError);
 
     this._sendingPromises.push(promise);
     const popPromise = () => {

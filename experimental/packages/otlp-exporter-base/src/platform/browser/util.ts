@@ -14,7 +14,14 @@
  * limitations under the License.
  */
 import { diag } from '@opentelemetry/api';
-import { OTLPExporterError } from '../../types';
+import * as otlpTypes from '../../types';
+
+let minimumFailedSendBeaconPayloadSize = Infinity;
+
+// exported only for test files
+export const resetSendWithBeacon = () => {
+  minimumFailedSendBeaconPayloadSize = Infinity;
+};
 
 /**
  * Send metrics/spans using browser navigator.sendBeacon
@@ -28,18 +35,25 @@ export function sendWithBeacon(
   body: string,
   url: string,
   blobPropertyBag: BlobPropertyBag,
-  onSuccess: () => void,
-  onError: (error: OTLPExporterError) => void
-): void {
-  if (navigator.sendBeacon(url, new Blob([body], blobPropertyBag))) {
+): boolean {
+  // navigator.sendBeacon returns 'false' if the given payload exceeds the user agent limit.
+  // See https://w3c.github.io/beacon/#return-value for specification.
+  // Because we don't know what the limit is and to keep user's console clean, we only try to send payloads that may suceed.
+  const blob = new Blob([body], blobPropertyBag);
+  if (
+    blob.size < minimumFailedSendBeaconPayloadSize &&
+    navigator.sendBeacon(url, blob)
+  ) {
     diag.debug('sendBeacon - can send', body);
-    onSuccess();
-  } else {
-    const error = new OTLPExporterError(
-      `sendBeacon - cannot send ${body}`
-    );
-    onError(error);
+    return true;
   }
+
+  minimumFailedSendBeaconPayloadSize = blob.size;
+  diag.info(
+    'sendBeacon failed because the given payload was too big; try to lower your span processor limits',
+  );
+
+  return false;
 }
 
 /**
@@ -57,7 +71,7 @@ export function sendWithXhr(
   headers: Record<string, string>,
   exporterTimeout: number,
   onSuccess: () => void,
-  onError: (error: OTLPExporterError) => void
+  onError: (error: otlpTypes.OTLPExporterError) => void,
 ): void {
   let reqIsDestroyed: boolean;
 
@@ -70,7 +84,7 @@ export function sendWithXhr(
   xhr.open('POST', url);
 
   const defaultHeaders = {
-    'Accept': 'application/json',
+    Accept: 'application/json',
     'Content-Type': 'application/json',
   };
 
@@ -90,14 +104,15 @@ export function sendWithXhr(
         diag.debug('xhr success', body);
         onSuccess();
       } else if (reqIsDestroyed) {
-        const error = new OTLPExporterError(
-          'Request Timeout', xhr.status
+        const error = new otlpTypes.OTLPExporterError(
+          'Request Timeout',
+          xhr.status,
         );
         onError(error);
       } else {
-        const error = new OTLPExporterError(
+        const error = new otlpTypes.OTLPExporterError(
           `Failed to export with XHR (status: ${xhr.status})`,
-          xhr.status
+          xhr.status,
         );
         clearTimeout(exporterTimer);
         onError(error);
