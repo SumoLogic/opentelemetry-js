@@ -16,4 +16,5 @@
 
 export * from './default-service-name';
 export * from './detect-resources';
-export * from './detectors';
+export * from './HostDetector';
+export * from './OSDetector';

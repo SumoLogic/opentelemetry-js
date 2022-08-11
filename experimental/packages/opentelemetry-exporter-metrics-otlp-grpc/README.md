@@ -1,11 +1,10 @@
 # OpenTelemetry Collector Metrics Exporter for node with grpc
 
 [![NPM Published Version][npm-img]][npm-url]
-[![dependencies][dependencies-image]][dependencies-url]
-[![devDependencies][devDependencies-image]][devDependencies-url]
 [![Apache License][license-image]][license-image]
 
-This module provides exporter for web and node to be used with [opentelemetry-collector][opentelemetry-collector-url] - last tested with version **0.25.0**.
+This module provides exporter for node to be used with OTLP (`grpc`) compatible receivers.
+Compatible with [opentelemetry-collector][opentelemetry-collector-url] versions `>=0.16 <=0.53`.
 
 ## Installation
 
@@ -21,37 +20,55 @@ To see sample code and documentation for the traces exporter, as well as instruc
 
 ## Metrics in Node - GRPC
 
-The OTLPTraceExporter in Node expects the URL to only be the hostname. It will not work with `/v1/metrics`. All options that work with trace also work with metrics.
+The OTLPMetricsExporter in Node expects the URL to only be the hostname. It will not work with `/v1/metrics`. All options that work with trace also work with metrics.
 
 ```js
-const { MeterProvider } = require('@opentelemetry/sdk-metrics-base');
+const { MeterProvider, PeriodicExportingMetricReader } = require('@opentelemetry/sdk-metrics-base');
 const { OTLPMetricExporter } =  require('@opentelemetry/exporter-metrics-otlp-grpc');
 const collectorOptions = {
-  // url is optional and can be omitted - default is grpc://localhost:4317
-  url: 'grpc://<collector-hostname>:<port>',
+  // url is optional and can be omitted - default is http://localhost:4317
+  url: 'http://<collector-hostname>:<port>',
 };
-const exporter = new OTLPMetricExporter(collectorOptions);
 
-// Register the exporter
-const provider = new MeterProvider({
-  exporter,
-  interval: 60000,
-})
+const exporter = new OTLPMetricExporter(collectorOptions);
+const meterProvider = new MeterProvider({});
+
+meterProvider.addMetricReader(new PeriodicExportingMetricReader({
+  exporter: metricExporter,
+  exportIntervalMillis: 1000,
+}));
+
 ['SIGINT', 'SIGTERM'].forEach(signal => {
-  process.on(signal, () => provider.shutdown().catch(console.error));
+  process.on(signal, () => meterProvider.shutdown().catch(console.error));
 });
 
 // Now, start recording data
-const meter = provider.getMeter('example-meter');
+const meter = meterProvider.getMeter('example-meter');
 const counter = meter.createCounter('metric_name');
 counter.add(10, { 'key': 'value' });
 ```
 
+## Environment Variable Configuration
+
+ | Environment variable | Description |
+  |----------------------|-------------|
+  | OTEL_EXPORTER_OTLP_METRICS_COMPRESSION | The compression type to use on OTLP metric requests. Options include gzip. By default no compression will be used. |
+  | OTEL_EXPORTER_OTLP_COMPRESSION | The compression type to use on OTLP trace, metric, and log requests. Options include gzip. By default no compression will be used. |
+  | OTEL_EXPORTER_OTLP_METRICS_INSECURE | Whether to enable client transport security for the exporter's gRPC connection for metric requests. This option only applies to OTLP/gRPC when an endpoint is provided without the http or https scheme. Options include true or false. By default insecure is false which creates a secure connection. |
+  | OTEL_EXPORTER_OTLP_INSECURE | Whether to enable client transport security for the exporter's gRPC connection for trace, metric and log requests. This option only applies to OTLP/gRPC when an endpoint is provided without the http or https scheme. Options include true or false. By default insecure is false which creates a secure connection. |
+  | OTEL_EXPORTER_OTLP_METRICS_CERTIFICATE | The path to the file containing trusted root certificate to use when verifying an OTLP metric server's TLS credentials. By default the host platform's trusted root certificate is used.|
+  | OTEL_EXPORTER_OTLP_CERTIFICATE | The path to the file containing trusted root certificate to use when verifying an OTLP trace, metric, or log server's TLS credentials. By default the host platform's trusted root certificate is used. |
+  | OTEL_EXPORTER_OTLP_METRICS_CLIENT_KEY | The path to the file containing private client key to use when verifying an OTLP metric client's TLS credentials. Must provide a client certificate/chain when providing a private client key. By default no client key file is used. |
+  | OTEL_EXPORTER_OTLP_CLIENT_KEY | The path to the file containing private client key to use when verifying an OTLP trace, metric or log client's TLS credentials. Must provide a client certificate/chain when providing a private client key. By default no client key file is used. |
+  | OTEL_EXPORTER_OTLP_METRICS_CLIENT_CERTIFICATE | The path to the file containing trusted client certificate/chain for clients private key to use when verifying an OTLP metric server's TLS credentials. Must provide a private client key when providing a certificate/chain. By default no chain file is used. |
+  | OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE | The path to the file containing trusted client certificate/chain for clients private key to use when verifying an OTLP trace, metric and log server's TLS credentials. Must provide a private client key when providing a certificate/chain. By default no chain file is used. |
+
+ > Settings configured programmatically take precedence over environment variables. Per-signal environment variables take precedence over non-per-signal environment variables.
+
 ## Running opentelemetry-collector locally to see the metrics
 
-1. Go to examples/otlp-exporter-node
-2. run `npm run docker:start`
-3. Open page at `http://localhost:9411/zipkin/` to observe the metrics
+1. Go to `examples/otlp-exporter-node`
+2. Follow the instructions there to observe the metrics.
 
 ## Useful links
 
@@ -66,12 +83,8 @@ Apache 2.0 - See [LICENSE][license-url] for more information.
 [discussions-url]: https://github.com/open-telemetry/opentelemetry-js/discussions
 [license-url]: https://github.com/open-telemetry/opentelemetry-js/blob/main/LICENSE
 [license-image]: https://img.shields.io/badge/license-Apache_2.0-green.svg?style=flat
-[dependencies-image]: https://status.david-dm.org/gh/open-telemetry/opentelemetry-js.svg?path=experimental%2Fpackages%2Fopentelemetry-exporter-metrics-otlp-grpc
-[dependencies-url]: https://david-dm.org/open-telemetry/opentelemetry-js?path=experimental%2Fpackages%2Fopentelemetry-exporter-metrics-otlp-grpc
-[devDependencies-image]: https://status.david-dm.org/gh/open-telemetry/opentelemetry-js.svg?path=experimental%2Fpackages%2Fopentelemetry-exporter-metrics-otlp-grpc&type=dev
-[devDependencies-url]: https://david-dm.org/open-telemetry/opentelemetry-js?path=experimental%2Fpackages%2Fopentelemetry-exporter-metrics-otlp-grpc&type=dev
 [npm-url]: https://www.npmjs.com/package/@opentelemetry/exporter-metrics-otlp-grpc
 [npm-img]: https://badge.fury.io/js/%40opentelemetry%2Fexporter-metrics-otlp-grpc.svg
 [opentelemetry-collector-url]: https://github.com/open-telemetry/opentelemetry-collector
 [semconv-resource-service-name]: https://github.com/open-telemetry/opentelemetry-specification/blob/main/specification/resource/semantic_conventions/README.md#service
-[trace-exporter-url]: https://github.com/open-telemetry/opentelemetry-js/tree/main/packages/opentelemetry-exporter-trace-otlp-grpc
+[trace-exporter-url]: https://github.com/open-telemetry/opentelemetry-js/tree/main/packages/exporter-trace-otlp-grpc

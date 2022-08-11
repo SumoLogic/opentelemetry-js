@@ -17,15 +17,14 @@ import {
   SpanAttributes,
   SpanStatusCode,
   Span,
-  SpanStatus,
   context,
+  SpanKind,
 } from '@opentelemetry/api';
 import {
   NetTransportValues,
   SemanticAttributes,
 } from '@opentelemetry/semantic-conventions';
 import {
-  ClientRequest,
   IncomingHttpHeaders,
   IncomingMessage,
   OutgoingHttpHeaders,
@@ -65,37 +64,20 @@ export const getAbsoluteUrl = (
 
   return `${protocol}//${host}${path}`;
 };
+
 /**
  * Parse status code from HTTP response. [More details](https://github.com/open-telemetry/opentelemetry-specification/blob/master/specification/data-http.md#status)
  */
-export const parseResponseStatus = (
-  statusCode: number | undefined,
-): Omit<SpanStatus, 'message'> => {
-
-  if(statusCode === undefined) {
-    return { code: SpanStatusCode.ERROR };
-  }
-
-  // 1xx, 2xx, 3xx are OK
-  if (statusCode >= 100 && statusCode < 400) {
-    return { code: SpanStatusCode.OK };
+export const parseResponseStatus = (kind: SpanKind, statusCode?: number): SpanStatusCode => {
+  const upperBound = kind === SpanKind.CLIENT ? 400 : 500;
+  // 1xx, 2xx, 3xx are OK on client and server
+  // 4xx is OK on server
+  if (statusCode && statusCode >= 100 && statusCode < upperBound) {
+    return SpanStatusCode.UNSET;
   }
 
   // All other codes are error
-  return { code: SpanStatusCode.ERROR };
-};
-
-/**
- * Returns whether the Expect header is on the given options object.
- * @param options Options for http.request.
- */
-export const hasExpectHeader = (options: RequestOptions): boolean => {
-  if (!options.headers) {
-    return false;
-  }
-
-  const keys = Object.keys(options.headers);
-  return !!keys.find(key => key.toLowerCase() === 'expect');
+  return SpanStatusCode.ERROR;
 };
 
 /**
@@ -129,7 +111,7 @@ export const satisfiesPattern = (
 export const isIgnored = (
   constant: string,
   list?: IgnoreMatcher[],
-  onException?: (error: Error) => void
+  onException?: (error: unknown) => void
 ): boolean => {
   if (!list) {
     // No ignored urls - trace everything
@@ -155,12 +137,10 @@ export const isIgnored = (
  * Sets the span with the error passed in params
  * @param {Span} span the span that need to be set
  * @param {Error} error error that will be set to span
- * @param {(IncomingMessage | ClientRequest)} [obj] used for enriching the status by checking the statusCode.
  */
 export const setSpanWithError = (
   span: Span,
-  error: Err,
-  obj?: IncomingMessage | ClientRequest
+  error: Err
 ): void => {
   const message = error.message;
 
@@ -169,23 +149,8 @@ export const setSpanWithError = (
     [AttributeNames.HTTP_ERROR_MESSAGE]: message,
   });
 
-  if (!obj) {
-    span.setStatus({ code: SpanStatusCode.ERROR, message });
-    return;
-  }
-
-  let status: SpanStatus;
-  if ((obj as IncomingMessage).statusCode) {
-    status = parseResponseStatus((obj as IncomingMessage).statusCode);
-  } else if ((obj as ClientRequest).aborted) {
-    status = { code: SpanStatusCode.ERROR };
-  } else {
-    status = { code: SpanStatusCode.ERROR };
-  }
-
-  status.message = message;
-
-  span.setStatus(status);
+  span.setStatus({ code: SpanStatusCode.ERROR, message });
+  span.recordException(error);
 };
 
 /**
@@ -299,23 +264,22 @@ export const getRequestInfo = (
     if (!pathname && optionsParsed.path) {
       pathname = url.parse(optionsParsed.path).pathname || '/';
     }
-    origin = `${optionsParsed.protocol || 'http:'}//${
-      optionsParsed.host || `${optionsParsed.hostname}:${optionsParsed.port}`
-    }`;
+    const hostname = optionsParsed.host || (optionsParsed.port != null ? `${optionsParsed.hostname}${optionsParsed.port}` : optionsParsed.hostname);
+    origin = `${optionsParsed.protocol || 'http:'}//${hostname}`;
   }
 
-  if (hasExpectHeader(optionsParsed)) {
-    optionsParsed.headers = Object.assign({}, optionsParsed.headers);
-  } else if (!optionsParsed.headers) {
-    optionsParsed.headers = {};
-  }
+  const headers = optionsParsed.headers ?? {};
+  optionsParsed.headers = Object.keys(headers).reduce((normalizedHeader, key) => {
+    normalizedHeader[key.toLowerCase()] = headers[key];
+    return normalizedHeader;
+  }, {} as OutgoingHttpHeaders);
   // some packages return method in lowercase..
   // ensure upperCase for consistency
   const method = optionsParsed.method
     ? optionsParsed.method.toUpperCase()
     : 'GET';
 
-  return { origin, pathname, method, optionsParsed };
+  return { origin, pathname, method, optionsParsed, };
 };
 
 /**
@@ -501,7 +465,7 @@ export function headerCapture(type: 'request' | 'response', headers: string[]) {
   return (span: Span, getHeader: (key: string) => undefined | string | string[] | number) => {
     for (const [capturedHeader, normalizedHeader] of normalizedHeaders) {
       const value = getHeader(capturedHeader);
-      
+
       if (value === undefined) {
         continue;
       }

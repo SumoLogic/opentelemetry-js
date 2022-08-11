@@ -13,13 +13,21 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
+import { diag } from '@opentelemetry/api';
 import {
-  MetricRecord,
-  AggregatorKind,
-  MetricKind,
+  ResourceMetrics,
+  InstrumentType,
+  DataPointType,
+  ScopeMetrics,
+  MetricData,
+  DataPoint,
+  Histogram,
 } from '@opentelemetry/sdk-metrics-base';
-import { PrometheusCheckpoint } from './types';
-import { Attributes } from '@opentelemetry/api-metrics';
+import type {
+  MetricAttributes,
+  MetricAttributeValue
+} from '@opentelemetry/api-metrics';
 import { hrTimeToMilliseconds } from '@opentelemetry/core';
 
 type PrometheusDataTypeLiteral =
@@ -33,14 +41,21 @@ function escapeString(str: string) {
   return str.replace(/\\/g, '\\\\').replace(/\n/g, '\\n');
 }
 
-function escapeAttributeValue(str: string) {
+/**
+ * String Attribute values are converted directly to Prometheus attribute values.
+ * Non-string values are represented as JSON-encoded strings.
+ *
+ * `undefined` is converted to an empty string.
+ */
+function escapeAttributeValue(str: MetricAttributeValue = '') {
   if (typeof str !== 'string') {
-    str = String(str);
+    str = JSON.stringify(str);
   }
   return escapeString(str).replace(/"/g, '\\"');
 }
 
 const invalidCharacterRegex = /[^a-z0-9_]/gi;
+
 /**
  * Ensures metric names are valid Prometheus metric names by removing
  * characters allowed by OpenTelemetry but disallowed by Prometheus.
@@ -69,15 +84,15 @@ function sanitizePrometheusMetricName(name: string): string {
  * Helper method which assists in enforcing the naming conventions for metric
  * names in Prometheus
  * @param name the name of the metric
- * @param kind the kind of metric
+ * @param type the kind of metric
  * @returns string
  */
 function enforcePrometheusNamingConvention(
   name: string,
-  kind: MetricKind
+  type: InstrumentType
 ): string {
   // Prometheus requires that metrics of the Counter kind have "_total" suffix
-  if (!name.endsWith('_total') && kind === MetricKind.COUNTER) {
+  if (!name.endsWith('_total') && type === InstrumentType.COUNTER) {
     name = name + '_total';
   }
 
@@ -99,22 +114,17 @@ function valueString(value: number) {
 }
 
 function toPrometheusType(
-  metricKind: MetricKind,
-  aggregatorKind: AggregatorKind
+  metricData: MetricData,
 ): PrometheusDataTypeLiteral {
-  switch (aggregatorKind) {
-    case AggregatorKind.SUM:
-      if (
-        metricKind === MetricKind.COUNTER ||
-        metricKind === MetricKind.OBSERVABLE_COUNTER
-      ) {
+  switch (metricData.dataPointType) {
+    case DataPointType.SUM:
+      if (metricData.isMonotonic) {
         return 'counter';
       }
-      /** MetricKind.UP_DOWN_COUNTER and MetricKind.OBSERVABLE_UP_DOWN_COUNTER */
       return 'gauge';
-    case AggregatorKind.LAST_VALUE:
+    case DataPointType.GAUGE:
       return 'gauge';
-    case AggregatorKind.HISTOGRAM:
+    case DataPointType.HISTOGRAM:
       return 'histogram';
     default:
       return 'untyped';
@@ -123,10 +133,10 @@ function toPrometheusType(
 
 function stringify(
   metricName: string,
-  attributes: Attributes,
+  attributes: MetricAttributes,
   value: number,
   timestamp?: number,
-  additionalAttributes?: Attributes
+  additionalAttributes?: MetricAttributes
 ) {
   let hasAttribute = false;
   let attributesStr = '';
@@ -168,112 +178,134 @@ export class PrometheusSerializer {
     this._appendTimestamp = appendTimestamp;
   }
 
-  serialize(checkpointSet: PrometheusCheckpoint[]): string {
+  serialize(resourceMetrics: ResourceMetrics): string {
     let str = '';
-    for (const checkpoint of checkpointSet) {
-      str += this.serializeCheckpointSet(checkpoint) + '\n';
+    for (const scopeMetrics of resourceMetrics.scopeMetrics) {
+      str += this._serializeScopeMetrics(scopeMetrics);
     }
     return str;
   }
 
-  serializeCheckpointSet(checkpoint: PrometheusCheckpoint): string {
+  private _serializeScopeMetrics(scopeMetrics: ScopeMetrics) {
+    let str = '';
+    for (const metric of scopeMetrics.metrics) {
+      str += this._serializeMetricData(metric) + '\n';
+    }
+    return str;
+  }
+
+  private _serializeMetricData(metricData: MetricData) {
     let name = sanitizePrometheusMetricName(
-      escapeString(checkpoint.descriptor.name)
+      escapeString(metricData.descriptor.name)
     );
     if (this._prefix) {
       name = `${this._prefix}${name}`;
     }
+    const dataPointType = metricData.dataPointType;
 
     name = enforcePrometheusNamingConvention(
       name,
-      checkpoint.descriptor.metricKind
+      metricData.descriptor.type
     );
 
     const help = `# HELP ${name} ${escapeString(
-      checkpoint.descriptor.description || 'description missing'
+      metricData.descriptor.description || 'description missing'
     )}`;
     const type = `# TYPE ${name} ${toPrometheusType(
-      checkpoint.descriptor.metricKind,
-      checkpoint.aggregatorKind
+      metricData
     )}`;
 
-    const results = checkpoint.records
-      .map(it => this.serializeRecord(name, it))
-      .join('');
+    let results = '';
+    switch (dataPointType) {
+      case DataPointType.SUM:
+      case DataPointType.GAUGE: {
+        results = metricData.dataPoints
+          .map(it => this._serializeSingularDataPoint(name, metricData.descriptor.type, it))
+          .join('');
+        break;
+      }
+      case DataPointType.HISTOGRAM: {
+        results = metricData.dataPoints
+          .map(it => this._serializeHistogramDataPoint(name, metricData.descriptor.type, it))
+          .join('');
+        break;
+      }
+      default: {
+        diag.error(`Unrecognizable DataPointType: ${dataPointType} for metric "${name}"`);
+      }
+    }
 
     return `${help}\n${type}\n${results}`.trim();
   }
 
-  serializeRecord(name: string, record: MetricRecord): string {
+  private _serializeSingularDataPoint(name: string, type: InstrumentType, dataPoint: DataPoint<number>): string {
     let results = '';
 
-    name = enforcePrometheusNamingConvention(
+    name = enforcePrometheusNamingConvention(name, type);
+    const { value, attributes } = dataPoint;
+    const timestamp = hrTimeToMilliseconds(dataPoint.endTime);
+    results += stringify(
       name,
-      record.descriptor.metricKind
+      attributes,
+      value,
+      this._appendTimestamp ? timestamp : undefined,
+      undefined
     );
+    return results;
+  }
 
-    switch (record.aggregator.kind) {
-      case AggregatorKind.SUM:
-      case AggregatorKind.LAST_VALUE: {
-        const { value, timestamp: hrtime } = record.aggregator.toPoint();
-        const timestamp = hrTimeToMilliseconds(hrtime);
+  private _serializeHistogramDataPoint(name: string, type: InstrumentType, dataPoint: DataPoint<Histogram>): string {
+    let results = '';
+
+    name = enforcePrometheusNamingConvention(name, type);
+    const attributes = dataPoint.attributes;
+    const histogram = dataPoint.value;
+    const timestamp = hrTimeToMilliseconds(dataPoint.endTime);
+    /** Histogram["bucket"] is not typed with `number` */
+    for (const key of ['count', 'sum'] as ('count' | 'sum')[]) {
+      const value = histogram[key];
+      if (value != null)
         results += stringify(
-          name,
-          record.attributes,
+          name + '_' + key,
+          attributes,
           value,
           this._appendTimestamp ? timestamp : undefined,
           undefined
         );
-        break;
-      }
-      case AggregatorKind.HISTOGRAM: {
-        const { value, timestamp: hrtime } = record.aggregator.toPoint();
-        const timestamp = hrTimeToMilliseconds(hrtime);
-        /** Histogram["bucket"] is not typed with `number` */
-        for (const key of ['count', 'sum'] as ('count' | 'sum')[]) {
-          results += stringify(
-            name + '_' + key,
-            record.attributes,
-            value[key],
-            this._appendTimestamp ? timestamp : undefined,
-            undefined
-          );
-        }
-
-        let cumulativeSum = 0;
-        const countEntries = value.buckets.counts.entries();
-        let infiniteBoundaryDefined = false;
-        for (const [idx, val] of countEntries) {
-          cumulativeSum += val;
-          const upperBound = value.buckets.boundaries[idx];
-          /** HistogramAggregator is producing different boundary output -
-           * in one case not including inifinity values, in other -
-           * full, e.g. [0, 100] and [0, 100, Infinity]
-           * we should consider that in export, if Infinity is defined, use it
-           * as boundary
-           */
-          if (upperBound === undefined && infiniteBoundaryDefined) {
-            break;
-          }
-          if (upperBound === Infinity) {
-            infiniteBoundaryDefined = true;
-          }
-          results += stringify(
-            name + '_bucket',
-            record.attributes,
-            cumulativeSum,
-            this._appendTimestamp ? timestamp : undefined,
-            {
-              le:
-                upperBound === undefined || upperBound === Infinity
-                  ? '+Inf'
-                  : String(upperBound),
-            }
-          );
-        }
-        break;
-      }
     }
+
+    let cumulativeSum = 0;
+    const countEntries = histogram.buckets.counts.entries();
+    let infiniteBoundaryDefined = false;
+    for (const [idx, val] of countEntries) {
+      cumulativeSum += val;
+      const upperBound = histogram.buckets.boundaries[idx];
+      /** HistogramAggregator is producing different boundary output -
+       * in one case not including infinity values, in other -
+       * full, e.g. [0, 100] and [0, 100, Infinity]
+       * we should consider that in export, if Infinity is defined, use it
+       * as boundary
+       */
+      if (upperBound === undefined && infiniteBoundaryDefined) {
+        break;
+      }
+      if (upperBound === Infinity) {
+        infiniteBoundaryDefined = true;
+      }
+      results += stringify(
+        name + '_bucket',
+        attributes,
+        cumulativeSum,
+        this._appendTimestamp ? timestamp : undefined,
+        {
+          le:
+            upperBound === undefined || upperBound === Infinity
+              ? '+Inf'
+              : String(upperBound),
+        }
+      );
+    }
+
     return results;
   }
 }

@@ -21,20 +21,35 @@ import {
   SpanContext,
   SpanKind,
   TraceFlags,
+  HrTime,
+  SpanAttributes,
+  SpanAttributeValue,
 } from '@opentelemetry/api';
 import {
-  hrTime,
+  DEFAULT_ATTRIBUTE_COUNT_LIMIT,
+  DEFAULT_ATTRIBUTE_VALUE_LENGTH_LIMIT,
   hrTimeDuration,
   hrTimeToMilliseconds,
   hrTimeToNanoseconds,
+  otperformance as performance,
 } from '@opentelemetry/core';
 import { SemanticAttributes } from '@opentelemetry/semantic-conventions';
 import * as assert from 'assert';
+import * as sinon from 'sinon';
 import { BasicTracerProvider, Span, SpanProcessor } from '../../src';
+import { invalidAttributes, validAttributes } from './util';
 
-const performanceTimeOrigin = hrTime();
+const performanceTimeOrigin: HrTime = [1, 1];
 
 describe('Span', () => {
+  beforeEach(() => {
+    sinon.stub(performance, 'timeOrigin')
+      .value(hrTimeToMilliseconds(performanceTimeOrigin));
+  });
+  afterEach(() => {
+    sinon.restore();
+  });
+
   const tracer = new BasicTracerProvider({
     spanLimits: {
       attributeValueLengthLimit: 100,
@@ -225,28 +240,14 @@ describe('Span', () => {
           SpanKind.CLIENT
         );
 
-        span.setAttribute('string', 'string');
-        span.setAttribute('number', 0);
-        span.setAttribute('bool', true);
-        span.setAttribute('array<string>', ['str1', 'str2']);
-        span.setAttribute('array<number>', [1, 2]);
-        span.setAttribute('array<bool>', [true, false]);
+        for (const [k, v] of Object.entries(validAttributes)) {
+          span.setAttribute(k, v);
+        }
+        for (const [k, v] of Object.entries(invalidAttributes)) {
+          span.setAttribute(k, v as unknown as SpanAttributeValue);
+        }
 
-        //@ts-expect-error invalid attribute type object
-        span.setAttribute('object', { foo: 'bar' });
-        //@ts-expect-error invalid attribute inhomogenous array
-        span.setAttribute('non-homogeneous-array', [0, '']);
-        // This empty length attribute should not be set
-        span.setAttribute('', 'empty-key');
-
-        assert.deepStrictEqual(span.attributes, {
-          string: 'string',
-          number: 0,
-          bool: true,
-          'array<string>': ['str1', 'str2'],
-          'array<number>': [1, 2],
-          'array<bool>': [true, false],
-        });
+        assert.deepStrictEqual(span.attributes, validAttributes);
       });
 
       it('should be able to overwrite attributes', () => {
@@ -486,6 +487,38 @@ describe('Span', () => {
         });
       });
 
+      describe('when span "attributeCountLimit" set to the default value and general "attributeCountLimit" option defined', () => {
+        const tracer = new BasicTracerProvider({
+          generalLimits: {
+            // Setting count limit
+            attributeCountLimit: 10,
+          },
+          spanLimits: {
+            attributeCountLimit: DEFAULT_ATTRIBUTE_COUNT_LIMIT,
+          }
+        }).getTracer('default');
+
+        const span = new Span(
+          tracer,
+          ROOT_CONTEXT,
+          name,
+          spanContext,
+          SpanKind.CLIENT
+        );
+        for (let i = 0; i < 150; i++) {
+          span.setAttribute('foo' + i, 'bar' + i);
+        }
+        span.end();
+
+        it('should remove / drop all remaining values after the number of values exceeds the span limit', () => {
+          assert.strictEqual(Object.keys(span.attributes).length, DEFAULT_ATTRIBUTE_COUNT_LIMIT);
+          assert.strictEqual(span.attributes['foo0'], 'bar0');
+          assert.strictEqual(span.attributes['foo10'], 'bar10');
+          assert.strictEqual(span.attributes['foo127'], 'bar127');
+          assert.strictEqual(span.attributes['foo128'], undefined);
+        });
+      });
+
       describe('when "attributeValueLengthLimit" option defined', () => {
         const tracer = new BasicTracerProvider({
           generalLimits: {
@@ -528,6 +561,44 @@ describe('Span', () => {
           assert.strictEqual(span.attributes['attr-non-string'], true);
         });
       });
+
+      describe('when span "attributeValueLengthLimit" set to the default value and general "attributeValueLengthLimit" option defined', () => {
+        const tracer = new BasicTracerProvider({
+          generalLimits: {
+            // Setting attribute value length limit
+            attributeValueLengthLimit: 10,
+          },
+          spanLimits: {
+            // Setting attribute value length limit
+            attributeValueLengthLimit: DEFAULT_ATTRIBUTE_VALUE_LENGTH_LIMIT,
+          },
+        }).getTracer('default');
+
+        const span = new Span(
+          tracer,
+          ROOT_CONTEXT,
+          name,
+          spanContext,
+          SpanKind.CLIENT
+        );
+
+        it('should not truncate value', () => {
+          span.setAttribute('attr-with-more-length', 'abcdefghijklmn');
+          assert.strictEqual(span.attributes['attr-with-more-length'], 'abcdefghijklmn');
+        });
+
+        it('should not truncate value of arrays', () => {
+          span.setAttribute('attr-array-of-strings', ['abcdefghijklmn', 'abc', 'abcde', '']);
+          span.setAttribute('attr-array-of-bool', [true, false]);
+          assert.deepStrictEqual(span.attributes['attr-array-of-strings'], ['abcdefghijklmn', 'abc', 'abcde', '']);
+          assert.deepStrictEqual(span.attributes['attr-array-of-bool'], [true, false]);
+        });
+
+        it('should return same value for non-string values', () => {
+          span.setAttribute('attr-non-string', true);
+          assert.strictEqual(span.attributes['attr-non-string'], true);
+        });
+      });
     });
   });
 
@@ -541,43 +612,42 @@ describe('Span', () => {
         SpanKind.CLIENT
       );
 
-      span.setAttributes({
-        string: 'string',
-        number: 0,
-        bool: true,
-        'array<string>': ['str1', 'str2'],
-        'array<number>': [1, 2],
-        'array<bool>': [true, false],
-        //@ts-expect-error invalid attribute type object
-        object: { foo: 'bar' },
-        //@ts-expect-error invalid attribute inhomogenous array
-        'non-homogeneous-array': [0, ''],
-        // This empty length attribute should not be set
-        '': 'empty-key',
-      });
+      span.setAttributes(validAttributes);
+      span.setAttributes(invalidAttributes as unknown as SpanAttributes);
 
-      assert.deepStrictEqual(span.attributes, {
-        string: 'string',
-        number: 0,
-        bool: true,
-        'array<string>': ['str1', 'str2'],
-        'array<number>': [1, 2],
-        'array<bool>': [true, false],
-      });
+      assert.deepStrictEqual(span.attributes, validAttributes);
     });
   });
 
-  it('should set an event', () => {
-    const span = new Span(
-      tracer,
-      ROOT_CONTEXT,
-      name,
-      spanContext,
-      SpanKind.CLIENT
-    );
-    span.addEvent('sent');
-    span.addEvent('rev', { attr1: 'value', attr2: 123, attr3: true });
-    span.end();
+  describe('addEvent', () => {
+    it('should add an event', () => {
+      const span = new Span(
+        tracer,
+        ROOT_CONTEXT,
+        name,
+        spanContext,
+        SpanKind.CLIENT
+      );
+      span.addEvent('sent');
+      span.addEvent('rev', { attr1: 'value', attr2: 123, attr3: true });
+      span.end();
+    });
+
+    it('should sanitize attribute values', () => {
+      const span = new Span(
+        tracer,
+        ROOT_CONTEXT,
+        name,
+        spanContext,
+        SpanKind.CLIENT
+      );
+      span.addEvent('rev', { ...validAttributes, ...invalidAttributes } as unknown as SpanAttributes);
+      span.end();
+
+      assert.strictEqual(span.events.length, 1);
+      assert.deepStrictEqual(span.events[0].name, 'rev');
+      assert.deepStrictEqual(span.events[0].attributes, validAttributes);
+    });
   });
 
   it('should set a link', () => {
@@ -619,6 +689,28 @@ describe('Span', () => {
 
     assert.strictEqual(span.events.length, 100);
     assert.strictEqual(span.events[span.events.length - 1].name, 'sent149');
+  });
+
+  it('should add no event', () => {
+    const tracer = new BasicTracerProvider({
+      spanLimits: {
+        eventCountLimit: 0,
+      },
+    }).getTracer('default');
+
+    const span = new Span(
+      tracer,
+      ROOT_CONTEXT,
+      name,
+      spanContext,
+      SpanKind.CLIENT
+    );
+    for (let i = 0; i < 10; i++) {
+      span.addEvent('sent' + i);
+    }
+    span.end();
+
+    assert.strictEqual(span.events.length, 0);
   });
 
   it('should set an error status', () => {
@@ -732,14 +824,14 @@ describe('Span', () => {
     assert.strictEqual(span.events.length, 1);
     const [event] = span.events;
     assert.deepStrictEqual(event.name, 'sent');
-    assert.ok(!event.attributes);
+    assert.deepStrictEqual(event.attributes, {});
     assert.ok(event.time[0] > 0);
 
     span.addEvent('rev', { attr1: 'value', attr2: 123, attr3: true });
     assert.strictEqual(span.events.length, 2);
     const [event1, event2] = span.events;
     assert.deepStrictEqual(event1.name, 'sent');
-    assert.ok(!event1.attributes);
+    assert.deepStrictEqual(event1.attributes, {});
     assert.ok(event1.time[0] > 0);
     assert.deepStrictEqual(event2.name, 'rev');
     assert.deepStrictEqual(event2.attributes, {

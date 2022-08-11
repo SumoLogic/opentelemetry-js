@@ -10,13 +10,22 @@
   ],
   "references": [
     {
+      "path": "../../../packages/opentelemetry-core"
+    },
+    {
+      "path": "../../../packages/opentelemetry-resources"
+    },
+    {
       "path": "../opentelemetry-api-metrics"
     },
     {
-      "path": "../opentelemetry-exporter-trace-otlp-http"
+      "path": "../opentelemetry-sdk-metrics-base"
     },
     {
-      "path": "../opentelemetry-sdk-metrics-base"
+      "path": "../otlp-exporter-base"
+    },
+    {
+      "path": "../otlp-transformer"
     }
   ]
 }

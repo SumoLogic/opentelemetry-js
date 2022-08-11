@@ -14,33 +14,12 @@
  * limitations under the License.
  */
 
-import * as api from '@opentelemetry/api-metrics';
-import { Resource } from '@opentelemetry/resources';
-import { Processor } from './export/Processor';
-import { MetricExporter } from './export/types';
-
-/** MeterConfig provides an interface for configuring a Meter. */
-export interface MeterConfig extends api.MeterOptions {
-  /** Metric exporter. */
-  exporter?: MetricExporter;
-
-  /** Metric collect interval */
-  interval?: number;
-
-  /** Resource associated with metric telemetry */
-  resource?: Resource;
-
-  /** Metric Processor. */
-  processor?: Processor;
-}
-
-/** Default Meter configuration. */
-export const DEFAULT_CONFIG = {};
-
-/** The default metric creation options value. */
-export const DEFAULT_METRIC_OPTIONS = {
-  disabled: false,
-  description: '',
-  unit: '1',
-  valueType: api.ValueType.DOUBLE,
+export type CommonReaderOptions = {
+  timeoutMillis?: number
 };
+
+export type CollectionOptions = CommonReaderOptions;
+
+export type ShutdownOptions = CommonReaderOptions;
+
+export type ForceFlushOptions = CommonReaderOptions;

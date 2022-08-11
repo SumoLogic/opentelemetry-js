@@ -14,13 +14,17 @@
  * limitations under the License.
  */
 import {
+  SpanAttributes,
+  Context,
   context,
   createContextKey,
   INVALID_TRACEID,
+  Link,
   ROOT_CONTEXT,
   Sampler,
   SamplingDecision,
   SpanContext,
+  SpanKind,
   trace,
   TraceFlags
 } from '@opentelemetry/api';
@@ -29,27 +33,50 @@ import {
   AlwaysOffSampler,
   AlwaysOnSampler,
   InstrumentationLibrary,
+  sanitizeAttributes,
   suppressTracing
 } from '@opentelemetry/core';
 import * as assert from 'assert';
-import { BasicTracerProvider, Span, Tracer } from '../../src';
+import { BasicTracerProvider, Span, SpanProcessor, Tracer } from '../../src';
 import { TestStackContextManager } from './export/TestStackContextManager';
 import * as sinon from 'sinon';
+import { invalidAttributes, validAttributes } from './util';
 
 describe('Tracer', () => {
   const tracerProvider = new BasicTracerProvider();
-  const envSource = (typeof window !== 'undefined'
-    ? window
-    : process.env) as any;
+  let envSource: Record<string, any>;
+  if (typeof process === 'undefined') {
+    envSource = (globalThis as unknown) as Record<string, any>;
+  } else {
+    envSource = process.env as Record<string, any>;
+  }
 
   class TestSampler implements Sampler {
-    shouldSample() {
+    shouldSample(_context: Context, _traceId: string, _spanName: string, _spanKind: SpanKind, attributes: SpanAttributes, links: Link[]) {
+      // The attributes object should be valid.
+      assert.deepStrictEqual(sanitizeAttributes(attributes), attributes);
+      links.forEach(link => {
+        assert.deepStrictEqual(sanitizeAttributes(link.attributes), link.attributes);
+      });
       return {
         decision: SamplingDecision.RECORD_AND_SAMPLED,
         attributes: {
           testAttribute: 'foobar',
-        },
+          // invalid attributes should be sanitized.
+          ...invalidAttributes,
+        } as unknown as SpanAttributes,
       };
+    }
+  }
+
+  class DummySpanProcessor implements SpanProcessor {
+    forceFlush () {
+      return Promise.resolve();
+    }
+    onStart() {}
+    onEnd() {}
+    shutdown() {
+      return Promise.resolve();
     }
   }
 
@@ -189,6 +216,54 @@ describe('Tracer', () => {
     assert.strictEqual((span as Span).parentSpanId, undefined);
   });
 
+  it('should pass the same context to sampler and spanprocessor', () => {
+    const parent: SpanContext = {
+      traceId: '00112233445566778899001122334455',
+      spanId: '0011223344556677',
+      traceFlags: TraceFlags.SAMPLED,
+    };
+    const context = trace.setSpanContext(ROOT_CONTEXT, parent);
+
+    const sp: SpanProcessor = new DummySpanProcessor();
+    const onStartSpy = sinon.spy(sp, 'onStart');
+    const tp = new BasicTracerProvider();
+    tp.addSpanProcessor(sp);
+
+    const sampler: Sampler = new AlwaysOnSampler();
+    const shouldSampleSpy = sinon.spy(sampler, 'shouldSample');
+    const tracer = new Tracer({ name: 'default' }, { sampler }, tp);
+    const span = tracer.startSpan('a', {}, context) as Span;
+    assert.strictEqual(span.parentSpanId, parent.spanId);
+    sinon.assert.calledOnceWithExactly(shouldSampleSpy, context, parent.traceId, 'a', SpanKind.INTERNAL, {}, []);
+    sinon.assert.calledOnceWithExactly(onStartSpy, span, context);
+  });
+
+  it('should pass the same context to sampler and spanprocessor if options.root is true', () => {
+    const parent: SpanContext = {
+      traceId: '00112233445566778899001122334455',
+      spanId: '0011223344556677',
+      traceFlags: TraceFlags.SAMPLED,
+    };
+    const context = trace.setSpanContext(ROOT_CONTEXT, parent);
+
+    const sp: SpanProcessor = new DummySpanProcessor();
+    const onStartSpy = sinon.spy(sp, 'onStart');
+    const tp = new BasicTracerProvider();
+    tp.addSpanProcessor(sp);
+
+    const sampler: Sampler = new AlwaysOnSampler();
+    const shouldSampleSpy = sinon.spy(sampler, 'shouldSample');
+    const tracer = new Tracer({ name: 'default' }, { sampler }, tp);
+    const span = tracer.startSpan('a', { root: true }, context) as Span;
+    assert.strictEqual(span.parentSpanId, undefined);
+    sinon.assert.calledOnce(shouldSampleSpy);
+    sinon.assert.calledOnce(onStartSpy);
+    const samplerContext = shouldSampleSpy.firstCall.args[0];
+    const processorContext = onStartSpy.firstCall.args[1];
+    assert.strictEqual(samplerContext, processorContext);
+    assert.strictEqual(getSpan(samplerContext), undefined);
+  });
+
   it('should sample a trace when OTEL_TRACES_SAMPLER_ARG is unset', () => {
     envSource.OTEL_TRACES_SAMPLER = 'traceidratio';
     envSource.OTEL_TRACES_SAMPLER_ARG = '';
@@ -242,9 +317,9 @@ describe('Tracer', () => {
 
     assert.strictEqual(tracer.startActiveSpan('my-span', span => {
       try {
-        assert(spy.calledWith('my-span'))
-        assert.strictEqual(getSpan(context.active()), span)
-        return 1
+        assert(spy.calledWith('my-span'));
+        assert.strictEqual(getSpan(context.active()), span);
+        return 1;
       } finally {
         span.end();
       }
@@ -252,7 +327,6 @@ describe('Tracer', () => {
   });
 
   it('should start an active span with name, options and function args', () => {
-
     const tracer = new Tracer(
       { name: 'default', version: '0.0.1' },
       { sampler: new TestSampler() },
@@ -263,9 +337,9 @@ describe('Tracer', () => {
 
     assert.strictEqual(tracer.startActiveSpan('my-span', {attributes: {foo: 'bar'}}, span => {
       try {
-        assert(spy.calledWith('my-span', {attributes: {foo: 'bar'}}))
-        assert.strictEqual(getSpan(context.active()), span)
-        return 1
+        assert(spy.calledWith('my-span', {attributes: {foo: 'bar'}}));
+        assert.strictEqual(getSpan(context.active()), span);
+        return 1;
       } finally {
         span.end();
       }
@@ -281,19 +355,44 @@ describe('Tracer', () => {
 
     const ctxKey = createContextKey('foo');
 
-    const ctx = context.active().setValue(ctxKey, 'bar')
+    const ctx = context.active().setValue(ctxKey, 'bar');
 
     const spy = sinon.spy(tracer, 'startSpan');
 
     assert.strictEqual(tracer.startActiveSpan('my-span', {attributes: {foo: 'bar'}}, ctx, span => {
       try {
-        assert(spy.calledWith('my-span', {attributes: {foo: 'bar'}}, ctx))
-        assert.strictEqual(getSpan(context.active()), span)
-        assert.strictEqual(ctx.getValue(ctxKey), 'bar')
-        return 1
+        assert(spy.calledWith('my-span', {attributes: {foo: 'bar'}}, ctx));
+        assert.strictEqual(getSpan(context.active()), span);
+        assert.strictEqual(ctx.getValue(ctxKey), 'bar');
+        return 1;
       } finally {
         span.end();
       }
     }), 1);
+  });
+
+  it('should sample with valid attributes', () => {
+    const tracer = new Tracer(
+      { name: 'default', version: '0.0.1' },
+      { sampler: new TestSampler() },
+      tracerProvider
+    );
+
+    const attributes = { ...validAttributes, ...invalidAttributes } as unknown as SpanAttributes;
+    const links = [{
+      context: {
+        traceId: 'b3cda95b652f4a1592b449d5929fda1b',
+        spanId: '6e0c63257de34c92',
+        traceFlags: TraceFlags.SAMPLED
+      },
+      attributes: { ...attributes },
+    }];
+    // TestSampler should validate the attributes and links.
+    const span = tracer.startSpan('my-span', { attributes, links }) as Span;
+    span.end();
+
+    assert.deepStrictEqual(span.attributes, { ...validAttributes, testAttribute: 'foobar' });
+    assert.strictEqual(span.links.length, 1);
+    assert.deepStrictEqual(span.links[0].attributes, validAttributes);
   });
 });

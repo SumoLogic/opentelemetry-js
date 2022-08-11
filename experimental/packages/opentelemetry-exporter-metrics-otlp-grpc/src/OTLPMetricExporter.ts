@@ -14,66 +14,66 @@
  * limitations under the License.
  */
 
-import { otlpTypes } from '@opentelemetry/exporter-trace-otlp-http';
-import { toOTLPExportMetricServiceRequest } from '@opentelemetry/exporter-metrics-otlp-http'
-import { MetricRecord, MetricExporter } from '@opentelemetry/sdk-metrics-base';
 import {
-  OTLPExporterConfigNode,
-  OTLPExporterNodeBase,
+  defaultOptions,
+  OTLPMetricExporterBase,
+  OTLPMetricExporterOptions
+} from '@opentelemetry/exporter-metrics-otlp-http';
+import { ResourceMetrics } from '@opentelemetry/sdk-metrics-base';
+import {
+  OTLPGRPCExporterConfigNode,
+  OTLPGRPCExporterNodeBase,
   ServiceClientType,
-  validateAndNormalizeUrl
-} from '@opentelemetry/exporter-trace-otlp-grpc';
+  validateAndNormalizeUrl,
+  DEFAULT_COLLECTOR_URL
+} from '@opentelemetry/otlp-grpc-exporter-base';
 import { baggageUtils, getEnv } from '@opentelemetry/core';
 import { Metadata } from '@grpc/grpc-js';
+import { createExportMetricsServiceRequest, IExportMetricsServiceRequest } from '@opentelemetry/otlp-transformer';
 
-const DEFAULT_COLLECTOR_URL = 'localhost:4317';
+class OTLPMetricExporterProxy extends OTLPGRPCExporterNodeBase<ResourceMetrics, IExportMetricsServiceRequest> {
 
-/**
- * OTLP Metric Exporter for Node
- */
-export class OTLPMetricExporter
-  extends OTLPExporterNodeBase<
-    MetricRecord,
-    otlpTypes.opentelemetryProto.collector.metrics.v1.ExportMetricsServiceRequest
-  >
-  implements MetricExporter {
-  // Converts time to nanoseconds
-  protected readonly _startTime = new Date().getTime() * 1000000;
-
-  constructor(config: OTLPExporterConfigNode = {}) {
+  constructor(config: OTLPGRPCExporterConfigNode & OTLPMetricExporterOptions= defaultOptions) {
     super(config);
     const headers = baggageUtils.parseKeyPairsIntoRecord(getEnv().OTEL_EXPORTER_OTLP_METRICS_HEADERS);
     this.metadata ||= new Metadata();
     for (const [k, v] of Object.entries(headers)) {
-      this.metadata.set(k, v)
+      this.metadata.set(k, v);
     }
   }
 
-  convert(
-    metrics: MetricRecord[]
-  ): otlpTypes.opentelemetryProto.collector.metrics.v1.ExportMetricsServiceRequest {
-    return toOTLPExportMetricServiceRequest(
-      metrics,
-      this._startTime,
-      this
-    );
-  }
-
-  getDefaultUrl(config: OTLPExporterConfigNode): string {
-    return typeof config.url === 'string'
-      ? validateAndNormalizeUrl(config.url)
-      : getEnv().OTEL_EXPORTER_OTLP_METRICS_ENDPOINT.length > 0
-      ? validateAndNormalizeUrl(getEnv().OTEL_EXPORTER_OTLP_METRICS_ENDPOINT)
-      : getEnv().OTEL_EXPORTER_OTLP_ENDPOINT.length > 0
-      ? validateAndNormalizeUrl(getEnv().OTEL_EXPORTER_OTLP_ENDPOINT)
-      : DEFAULT_COLLECTOR_URL;
+  getServiceProtoPath(): string {
+    return 'opentelemetry/proto/collector/metrics/v1/metrics_service.proto';
   }
 
   getServiceClientType(): ServiceClientType {
     return ServiceClientType.METRICS;
   }
 
-  getServiceProtoPath(): string {
-    return 'opentelemetry/proto/collector/metrics/v1/metrics_service.proto';
+  getDefaultUrl(config: OTLPGRPCExporterConfigNode): string {
+    return validateAndNormalizeUrl(this.getUrlFromConfig(config));
+  }
+
+  convert(metrics: ResourceMetrics[]): IExportMetricsServiceRequest {
+    return createExportMetricsServiceRequest(metrics);
+  }
+
+  getUrlFromConfig(config: OTLPGRPCExporterConfigNode): string {
+    if (typeof config.url === 'string') {
+      return config.url;
+    }
+
+    return getEnv().OTEL_EXPORTER_OTLP_METRICS_ENDPOINT ||
+      getEnv().OTEL_EXPORTER_OTLP_ENDPOINT ||
+      DEFAULT_COLLECTOR_URL;
+  }
+}
+
+/**
+ * OTLP-gRPC metric exporter
+ */
+export class OTLPMetricExporter extends OTLPMetricExporterBase<OTLPMetricExporterProxy>{
+  constructor(config: OTLPGRPCExporterConfigNode & OTLPMetricExporterOptions = defaultOptions) {
+    super(new OTLPMetricExporterProxy(config), config);
   }
 }
