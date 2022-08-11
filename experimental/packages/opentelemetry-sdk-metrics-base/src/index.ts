@@ -14,16 +14,18 @@
  * limitations under the License.
  */
 
-export * from './BoundInstrument';
-export * from './CounterMetric';
-export * from './HistogramMetric';
+export { Sum, LastValue, Histogram } from './aggregator/types';
+export * from './export/AggregationTemporality';
+export * from './export/MetricData';
+export * from './export/MetricExporter';
+export * from './export/MetricProducer';
+export * from './export/MetricReader';
+export * from './export/PeriodicExportingMetricReader';
+export * from './export/InMemoryMetricExporter';
+export { InstrumentDescriptor, InstrumentType } from './InstrumentDescriptor';
 export * from './Meter';
 export * from './MeterProvider';
-export * from './Metric';
-export * from './ObservableGaugeMetric';
-export * from './export/aggregators';
-export * from './export/ConsoleMetricExporter';
-export * from './export/Processor';
-export * from './export/types';
-export * from './UpDownCounterMetric';
-export { MeterConfig } from './types';
+export * from './ObservableResult';
+export { TimeoutError } from './utils';
+export * from './view/Aggregation';
+export * from './view/View';

@@ -24,7 +24,6 @@ import {
 import { BasicTracerProvider, Span } from '@opentelemetry/sdk-trace-base';
 import { SemanticAttributes } from '@opentelemetry/semantic-conventions';
 import * as assert from 'assert';
-import * as http from 'http';
 import { IncomingMessage, ServerResponse } from 'http';
 import { Socket } from 'net';
 import * as sinon from 'sinon';
@@ -38,45 +37,29 @@ import { AsyncHooksContextManager } from '@opentelemetry/context-async-hooks';
 describe('Utility', () => {
   describe('parseResponseStatus()', () => {
     it('should return ERROR code by default', () => {
-      const status = utils.parseResponseStatus(
-        (undefined as unknown) as number
-      );
-      assert.deepStrictEqual(status, { code: SpanStatusCode.ERROR });
+      const status = utils.parseResponseStatus(SpanKind.CLIENT, undefined);
+      assert.deepStrictEqual(status, SpanStatusCode.ERROR);
     });
 
-    it('should return OK for Success HTTP status code', () => {
+    it('should return UNSET for Success HTTP status code', () => {
       for (let index = 100; index < 400; index++) {
-        const status = utils.parseResponseStatus(index);
-        assert.deepStrictEqual(status, { code: SpanStatusCode.OK });
+        const status = utils.parseResponseStatus(SpanKind.CLIENT, index);
+        assert.deepStrictEqual(status, SpanStatusCode.UNSET);
+      }
+      for (let index = 100; index < 500; index++) {
+        const status = utils.parseResponseStatus(SpanKind.SERVER, index);
+        assert.deepStrictEqual(status, SpanStatusCode.UNSET);
       }
     });
 
-    it('should not return OK for Bad HTTP status code', () => {
+    it('should return ERROR for bad status codes', () => {
       for (let index = 400; index <= 600; index++) {
-        const status = utils.parseResponseStatus(index);
-        assert.notStrictEqual(status.code, SpanStatusCode.OK);
+        const status = utils.parseResponseStatus(SpanKind.CLIENT, index);
+        assert.notStrictEqual(status, SpanStatusCode.UNSET);
       }
-    });
-  });
-  describe('hasExpectHeader()', () => {
-    it('should throw if no option', () => {
-      try {
-        utils.hasExpectHeader('' as http.RequestOptions);
-        assert.fail();
-      } catch (ignore) {}
-    });
-
-    it('should not throw if no headers', () => {
-      const result = utils.hasExpectHeader({} as http.RequestOptions);
-      assert.strictEqual(result, false);
-    });
-
-    it('should return true on Expect (no case sensitive)', () => {
-      for (const headers of [{ Expect: 1 }, { expect: 1 }, { ExPect: 1 }]) {
-        const result = utils.hasExpectHeader({
-          headers,
-        } as http.RequestOptions);
-        assert.strictEqual(result, true);
+      for (let index = 500; index <= 600; index++) {
+        const status = utils.parseResponseStatus(SpanKind.SERVER, index);
+        assert.notStrictEqual(status, SpanStatusCode.UNSET);
       }
     });
   });
@@ -89,11 +72,23 @@ describe('Utility', () => {
         ...urlParsed,
         pathname: undefined,
       };
+      const urlParsedWithUndefinedHostAndPort = {
+        ...urlParsed,
+        host: undefined,
+        port: undefined,
+      };
+      const urlParsedWithUndefinedHostAndNullPort = {
+        ...urlParsed,
+        host: undefined,
+        port: null,
+      };
       const whatWgUrl = new url.URL(webUrl);
       for (const param of [
         webUrl,
         urlParsed,
         urlParsedWithoutPathname,
+        urlParsedWithUndefinedHostAndPort,
+        urlParsedWithUndefinedHostAndNullPort,
         whatWgUrl,
       ]) {
         const result = utils.getRequestInfo(param);
@@ -170,7 +165,7 @@ describe('Utility', () => {
     });
 
     it('should not re-throw when function throws an exception', () => {
-      const onException = (e: Error) => {
+      const onException = (e: unknown) => {
         // Do nothing
       };
       for (const callback of [undefined, onException]) {
@@ -250,23 +245,23 @@ describe('Utility', () => {
   describe('setSpanWithError()', () => {
     it('should have error attributes', () => {
       const errorMessage = 'test error';
-      for (const obj of [undefined, { statusCode: 400 }]) {
-        const span = new Span(
-          new BasicTracerProvider().getTracer('default'),
-          ROOT_CONTEXT,
-          'test',
-          { spanId: '', traceId: '', traceFlags: TraceFlags.SAMPLED },
-          SpanKind.INTERNAL
-        );
-        /* tslint:disable-next-line:no-any */
-        utils.setSpanWithError(span, new Error(errorMessage), obj as any);
-        const attributes = span.attributes;
-        assert.strictEqual(
-          attributes[AttributeNames.HTTP_ERROR_MESSAGE],
-          errorMessage
-        );
-        assert.ok(attributes[AttributeNames.HTTP_ERROR_NAME]);
-      }
+      const span = new Span(
+        new BasicTracerProvider().getTracer('default'),
+        ROOT_CONTEXT,
+        'test',
+        { spanId: '', traceId: '', traceFlags: TraceFlags.SAMPLED },
+        SpanKind.INTERNAL
+      );
+      /* tslint:disable-next-line:no-any */
+      utils.setSpanWithError(span, new Error(errorMessage));
+      const attributes = span.attributes;
+      assert.strictEqual(
+        attributes[AttributeNames.HTTP_ERROR_MESSAGE],
+        errorMessage
+      );
+      assert.strictEqual(span.events.length, 1);
+      assert.strictEqual(span.events[0].name, 'exception');
+      assert.ok(attributes[AttributeNames.HTTP_ERROR_NAME]);
     });
   });
 
@@ -475,12 +470,12 @@ describe('Utility', () => {
       request.headers = {
         'user-agent': 'chrome',
         'x-forwarded-for': '<client>, <proxy1>, <proxy2>'
-      }
-      const attributes = utils.getIncomingRequestAttributes(request, { component: 'http'})
-      assert.strictEqual(attributes[SemanticAttributes.HTTP_ROUTE], undefined)
+      };
+      const attributes = utils.getIncomingRequestAttributes(request, { component: 'http'});
+      assert.strictEqual(attributes[SemanticAttributes.HTTP_ROUTE], undefined);
     });
   });
-  
+
   describe('headers to span attributes capture', () => {
     let span: Span;
 
@@ -539,6 +534,6 @@ describe('Utility', () => {
 
       assert.deepStrictEqual(span.attributes['http.request.header.origin'], ['localhost']);
       assert.deepStrictEqual(span.attributes['http.request.header.accept'], undefined);
-    })
+    });
   });
 });

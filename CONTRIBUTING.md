@@ -43,7 +43,34 @@ You will receive the following error :
 ✖   type must be one of [ci, feat, fix, docs, style, refactor, perf, test, revert, chore] [type-enum]
 ```
 
-Here an exemple that will pass the verification: `git commit -s -am "chore(opentelemetry-core): update deps"`
+Here an example that will pass the verification: `git commit -s -am "chore(opentelemetry-core): update deps"`
+
+### Changelog
+
+An entry into `CHANGELOG.md` or `experimental/CHANGELOG.md` is required for the following reasons:
+
+- Changes made to the behaviour of the component
+- Changes to the configuration
+- Changes to default settings
+- New components being added
+
+It is reasonable to omit an entry to the changelog under these circuimstances:
+
+- Updating test to remove flakiness or improve coverage
+- Updates to the CI/CD process
+
+If there is some uncertainty with regards to if a changelog entry is needed, the recommendation is to create an entry to in the event that the change is important to the project consumers.
+If a change does not require a changelog entry, the label `"Skip Changelog"` may be applied.
+Pull requests with the `dependencies` label will be skipped by the changelog CI check.
+If the change affects the overall project and not any individual package, it should usually go in the main changelog.
+Changelog entries should be in the following format:
+
+```md
+* feat(subject): pull request title here #{pull request number} @{author github handle}
+```
+
+Subject should describe the area of the project that was changed as descriptively as is possible in a short space.
+For example, this may be the package name if a single package was updated or just `metrics` if both the metrics API and SDK are affected.
 
 ### Fork
 
@@ -78,7 +105,6 @@ Please also see [GitHub workflow](https://github.com/open-telemetry/community/bl
 - [TypeScript](https://www.typescriptlang.org/)
 - [lerna](https://github.com/lerna/lerna) to manage dependencies, compilations, and links between packages. Most lerna commands should be run by calling the provided npm scripts.
 - [MochaJS](https://mochajs.org/) for tests
-- [gts](https://github.com/google/gts)
 - [eslint](https://eslint.org/)
 
 Most of the commands needed for development are accessed as [npm scripts](https://docs.npmjs.com/cli/v6/using-npm/scripts). It is recommended that you use the provided npm scripts instead of using `lerna run` in most cases.
@@ -106,6 +132,9 @@ npm run clean
 ```
 
 These commands can also be run for specific packages instead of the whole project, which can speed up compilations while developing.
+
+**NOTE**: To run commands in specific packages (compile, lint, etc), please ensure you are using at least `7.x`
+version of `npm`.
 
 ```sh
 # Build a single module and all of its dependencies
@@ -137,9 +166,16 @@ cd packages/opentelemetry-module-name
 npm test
 ```
 
+To run the unit tests continuously in watch mode while developing, use:
+
+```sh
+# Run test in watch mode
+npm run tdd
+```
+
 ### Linting
 
-This project uses a combination of `gts` and `eslint`. Just like tests and compilation, linting can be done for all packages or only a single package.
+This project uses `eslint` to lint source code. Just like tests and compilation, linting can be done for all packages or only a single package.
 
 ```sh
 # Lint all modules
@@ -160,6 +196,19 @@ npm run lint:fix
 cd packages/opentelemetry-module-name
 npm run lint:fix
 ```
+
+### Generating docs
+
+We use [typedoc](https://www.npmjs.com/package/typedoc) to generate the api documentation.
+
+To generate the docs, use:
+
+```sh
+# Generate docs in the root 'docs' directory
+npm run docs
+```
+
+The document will be available under `docs` path.
 
 ### Adding a package
 
@@ -196,17 +245,37 @@ After adding the package, run `npm install` from the root of the project. This w
 
 If all of the above requirements are met and there are no unresolved discussions, a pull request may be merged by either a maintainer or an approver.
 
-### Generating API documentation
-
-- `npm run docs` to generate API documentation. Generates the documentation in `packages/opentelemetry-api/docs/out`
-
 ### Generating CHANGELOG documentation
 
 - Generate and export your [Github access token](https://docs.github.com/en/github/authenticating-to-github/creating-a-personal-access-token): `export GITHUB_AUTH=<your_token>`
 - `npm run changelog` to generate CHANGELOG documentation in your terminal (see [RELEASING.md](RELEASING.md) for more details).
 
-### Benchmarks
+### Platform conditional exports
 
-When two or more approaches must be compared, please write a benchmark in the benchmark/index.js module so that we can keep track of the most efficient algorithm.
+Universal packages are packages that can be used in both web browsers and
+Node.js environment. These packages may be implemented on top of different
+platform APIs to achieve the same goal. Like accessing the _global_ reference,
+we have different preferred ways to do it:
 
-- `npm run bench` to run your benchmark.
+- In Node.js, we access the _global_ reference with `globalThis` or `global`:
+
+```js
+/// packages/opentelemetry-core/src/platform/node/globalThis.ts
+export const _globalThis = typeof globalThis === 'object' ? globalThis : global;
+```
+
+- In web browser, we access the _global_ reference with the following definition:
+
+```js
+/// packages/opentelemetry-core/src/platform/browser/globalThis.ts
+export const _globalThis: typeof globalThis =
+  typeof globalThis === 'object' ? globalThis :
+  typeof self === 'object' ? self :
+  typeof window === 'object' ? window :
+  typeof global === 'object' ? global :
+  {} as typeof globalThis;
+```
+
+Even though the implementation may differ, the exported names must be aligned.
+It can be confusing if exported names present in one environment but not in the
+others.

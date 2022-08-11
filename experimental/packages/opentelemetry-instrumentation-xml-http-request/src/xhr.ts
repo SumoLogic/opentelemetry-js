@@ -26,10 +26,9 @@ import { SemanticAttributes } from '@opentelemetry/semantic-conventions';
 import {
   addSpanNetworkEvents,
   getResource,
-  parseUrl,
   PerformanceTimingNames as PTN,
   shouldPropagateTraceHeaders,
-  getUrlNormalizingAnchor
+  parseUrl,
 } from '@opentelemetry/sdk-trace-web';
 import { EventNames } from './enums/EventNames';
 import {
@@ -106,13 +105,14 @@ export class XMLHttpRequestInstrumentation extends InstrumentationBase<XMLHttpRe
   /**
    * Adds custom headers to XMLHttpRequest
    * @param xhr
-   * @param span
+   * @param spanUrl
    * @private
    */
   private _addHeaders(xhr: XMLHttpRequest, spanUrl: string) {
+    const url = parseUrl(spanUrl).href;
     if (
       !shouldPropagateTraceHeaders(
-        spanUrl,
+        url,
         this._getConfig().propagateTraceHeaderCorsUrls
       )
     ) {
@@ -209,21 +209,20 @@ export class XMLHttpRequestInstrumentation extends InstrumentationBase<XMLHttpRe
     const xhrMem = this._xhrMem.get(xhr);
     if (
       !xhrMem ||
-      typeof window.PerformanceObserver === 'undefined' ||
-      typeof window.PerformanceResourceTiming === 'undefined'
+      typeof PerformanceObserver !== 'function' ||
+      typeof PerformanceResourceTiming !== 'function'
     ) {
       return;
     }
     xhrMem.createdResources = {
       observer: new PerformanceObserver(list => {
         const entries = list.getEntries() as PerformanceResourceTiming[];
-        const urlNormalizingAnchor = getUrlNormalizingAnchor();
-        urlNormalizingAnchor.href = spanUrl;
+        const parsedUrl = parseUrl(spanUrl);
 
         entries.forEach(entry => {
           if (
             entry.initiatorType === 'xmlhttprequest' &&
-            entry.name === urlNormalizingAnchor.href
+            entry.name === parsedUrl.href
           ) {
             if (xhrMem.createdResources) {
               xhrMem.createdResources.entries.push(entry);
@@ -281,7 +280,7 @@ export class XMLHttpRequestInstrumentation extends InstrumentationBase<XMLHttpRe
     }
 
     const resource = getResource(
-      spanUrl,
+      parseUrl(spanUrl).href,
       startTime,
       endTime,
       resources,

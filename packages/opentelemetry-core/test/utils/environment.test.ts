@@ -78,6 +78,7 @@ describe('environment', () => {
         OTEL_BSP_MAX_EXPORT_BATCH_SIZE: 40,
         OTEL_BSP_SCHEDULE_DELAY: 50,
         OTEL_EXPORTER_JAEGER_AGENT_HOST: 'host.domain.com',
+        OTEL_EXPORTER_JAEGER_AGENT_PORT: 1234,
         OTEL_EXPORTER_JAEGER_ENDPOINT: 'https://example.com/endpoint',
         OTEL_EXPORTER_JAEGER_PASSWORD: 'secret',
         OTEL_EXPORTER_JAEGER_USER: 'whoami',
@@ -92,6 +93,8 @@ describe('environment', () => {
         OTEL_SPAN_LINK_COUNT_LIMIT: 30,
         OTEL_TRACES_SAMPLER: 'always_on',
         OTEL_TRACES_SAMPLER_ARG: '0.5',
+        OTEL_EXPORTER_OTLP_TIMEOUT: 15000,
+        OTEL_EXPORTER_OTLP_TRACES_TIMEOUT: 12000,
       });
       const env = getEnv();
       assert.deepStrictEqual(env.OTEL_NO_PATCH_MODULES, ['a', 'b', 'c']);
@@ -112,6 +115,7 @@ describe('environment', () => {
         env.OTEL_EXPORTER_JAEGER_AGENT_HOST,
         'host.domain.com'
       );
+      assert.strictEqual(env.OTEL_EXPORTER_JAEGER_AGENT_PORT, 1234);
       assert.strictEqual(
         env.ECS_CONTAINER_METADATA_URI_V4,
         'https://ecs.uri/v4'
@@ -126,6 +130,8 @@ describe('environment', () => {
       assert.strictEqual(env.OTEL_BSP_SCHEDULE_DELAY, 50);
       assert.strictEqual(env.OTEL_TRACES_SAMPLER, 'always_on');
       assert.strictEqual(env.OTEL_TRACES_SAMPLER_ARG, '0.5');
+      assert.strictEqual(env.OTEL_EXPORTER_OTLP_TIMEOUT, 15000);
+      assert.strictEqual(env.OTEL_EXPORTER_OTLP_TRACES_TIMEOUT, 12000);
     });
 
     it('should parse OTEL_LOG_LEVEL despite casing', () => {

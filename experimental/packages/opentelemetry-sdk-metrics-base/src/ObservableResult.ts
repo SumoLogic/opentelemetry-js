@@ -14,18 +14,64 @@
  * limitations under the License.
  */
 
-import {
-  ObservableResult as TypeObservableResult,
-  Attributes,
-} from '@opentelemetry/api-metrics';
+import * as api from '@opentelemetry/api';
+import * as metrics from '@opentelemetry/api-metrics';
+import { AttributeHashMap } from './state/HashMap';
+import { isObservableInstrument, ObservableInstrument } from './Instruments';
+import { InstrumentDescriptor } from '.';
 
 /**
- * Implementation of {@link TypeObservableResult}
+ * The class implements {@link metrics.ObservableResult} interface.
  */
-export class ObservableResult implements TypeObservableResult {
-  values: Map<Attributes, number> = new Map<Attributes, number>();
+export class ObservableResultImpl implements metrics.ObservableResult {
+  /**
+   * @internal
+   */
+  _buffer = new AttributeHashMap<number>();
 
-  observe(value: number, attributes: Attributes): void {
-    this.values.set(attributes, value);
+  constructor(private _descriptor: InstrumentDescriptor) {}
+
+  /**
+   * Observe a measurement of the value associated with the given attributes.
+   */
+  observe(value: number, attributes: metrics.MetricAttributes = {}): void {
+    if (this._descriptor.valueType === metrics.ValueType.INT && !Number.isInteger(value)) {
+      api.diag.warn(
+        `INT value type cannot accept a floating-point value for ${this._descriptor.name}, ignoring the fractional digits.`
+      );
+      value = Math.trunc(value);
+    }
+    this._buffer.set(attributes, value);
+  }
+}
+
+/**
+ * The class implements {@link metrics.BatchObservableCallback} interface.
+ */
+export class BatchObservableResultImpl implements metrics.BatchObservableResult {
+  /**
+   * @internal
+   */
+  _buffer: Map<ObservableInstrument, AttributeHashMap<number>> = new Map();
+
+  /**
+   * Observe a measurement of the value associated with the given attributes.
+   */
+  observe(metric: metrics.Observable, value: number, attributes: metrics.MetricAttributes = {}): void {
+    if (!isObservableInstrument(metric)) {
+      return;
+    }
+    let map = this._buffer.get(metric);
+    if (map == null) {
+      map = new AttributeHashMap();
+      this._buffer.set(metric, map);
+    }
+    if (metric._descriptor.valueType === metrics.ValueType.INT && !Number.isInteger(value)) {
+      api.diag.warn(
+        `INT value type cannot accept a floating-point value for ${metric._descriptor.name}, ignoring the fractional digits.`
+      );
+      value = Math.trunc(value);
+    }
+    map.set(attributes, value);
   }
 }

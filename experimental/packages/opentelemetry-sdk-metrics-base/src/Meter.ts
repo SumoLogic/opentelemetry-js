@@ -14,319 +14,98 @@
  * limitations under the License.
  */
 
-import { diag } from '@opentelemetry/api';
-import * as api from '@opentelemetry/api-metrics';
-import { InstrumentationLibrary } from '@opentelemetry/core';
-import { Resource } from '@opentelemetry/resources';
-import { BaseBoundInstrument } from './BoundInstrument';
-import { CounterMetric } from './CounterMetric';
-import { PushController } from './export/Controller';
-import { NoopExporter } from './export/NoopExporter';
-import { Processor, UngroupedProcessor } from './export/Processor';
-import { Metric } from './Metric';
-import { ObservableCounterMetric } from './ObservableCounterMetric';
-import { DEFAULT_CONFIG, DEFAULT_METRIC_OPTIONS, MeterConfig } from './types';
-import { UpDownCounterMetric } from './UpDownCounterMetric';
-import { ObservableUpDownCounterMetric } from './ObservableUpDownCounterMetric';
-import { ObservableGaugeMetric } from './ObservableGaugeMetric';
-import { HistogramMetric } from './HistogramMetric';
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const merge = require('lodash.merge');
-// @TODO - replace once the core is released
-// import { merge } from '@opentelemetry/core';
+import * as metrics from '@opentelemetry/api-metrics';
+import { createInstrumentDescriptor, InstrumentType } from './InstrumentDescriptor';
+import {
+  CounterInstrument,
+  HistogramInstrument,
+  ObservableCounterInstrument,
+  ObservableGaugeInstrument,
+  ObservableUpDownCounterInstrument,
+  UpDownCounterInstrument,
+} from './Instruments';
+import { MeterSharedState } from './state/MeterSharedState';
 
 /**
- * Meter is an implementation of the {@link Meter} interface.
+ * This class implements the {@link metrics.Meter} interface.
  */
-export class Meter implements api.Meter {
-  private readonly _metrics = new Map<string, Metric<BaseBoundInstrument>>();
-  private readonly _processor: Processor;
-  private readonly _resource: Resource;
-  private readonly _instrumentationLibrary: InstrumentationLibrary;
-  private readonly _controller: PushController;
-  private _isShutdown = false;
-  private _shuttingDownPromise: Promise<void> = Promise.resolve();
+export class Meter implements metrics.Meter {
+  constructor(private _meterSharedState: MeterSharedState) {}
 
   /**
-   * Constructs a new Meter instance.
+   * Create a {@link metrics.Histogram} instrument.
    */
-  constructor(
-    instrumentationLibrary: InstrumentationLibrary,
-    config: MeterConfig = {}
-  ) {
-    const mergedConfig = merge({}, DEFAULT_CONFIG, config);
-    this._processor = mergedConfig.processor ?? new UngroupedProcessor();
-    this._resource =
-      mergedConfig.resource || Resource.empty();
-    this._instrumentationLibrary = instrumentationLibrary;
-    // start the push controller
-    const exporter = mergedConfig.exporter || new NoopExporter();
-    const interval = mergedConfig.interval;
-    this._controller = new PushController(this, exporter, interval);
+  createHistogram(name: string, options?: metrics.MetricOptions): metrics.Histogram {
+    const descriptor = createInstrumentDescriptor(name, InstrumentType.HISTOGRAM, options);
+    const storage = this._meterSharedState.registerMetricStorage(descriptor);
+    return new HistogramInstrument(storage, descriptor);
   }
 
   /**
-   * Creates and returns a new {@link Histogram}.
-   * @param name the name of the metric.
-   * @param [options] the metric options.
+   * Create a {@link metrics.Counter} instrument.
    */
-  createHistogram(
-    name: string,
-    options?: api.MetricOptions
-  ): api.Histogram {
-    if (!this._isValidName(name)) {
-      diag.warn(
-        `Invalid metric name ${name}. Defaulting to noop metric implementation.`
-      );
-      return api.NOOP_HISTOGRAM_METRIC;
-    }
-    const opt: api.MetricOptions = {
-      ...DEFAULT_METRIC_OPTIONS,
-      ...options,
-    };
-
-    const histogram = new HistogramMetric(
-      name,
-      opt,
-      this._processor,
-      this._resource,
-      this._instrumentationLibrary
-    );
-    this._registerMetric(name, histogram);
-    return histogram;
+  createCounter(name: string, options?: metrics.MetricOptions): metrics.Counter {
+    const descriptor = createInstrumentDescriptor(name, InstrumentType.COUNTER, options);
+    const storage = this._meterSharedState.registerMetricStorage(descriptor);
+    return new CounterInstrument(storage, descriptor);
   }
 
   /**
-   * Creates a new counter metric. Generally, this kind of metric when the
-   * value is a quantity, the sum is of primary interest, and the event count
-   * and value distribution are not of primary interest.
-   * @param name the name of the metric.
-   * @param [options] the metric options.
+   * Create a {@link metrics.UpDownCounter} instrument.
    */
-  createCounter(name: string, options?: api.MetricOptions): api.Counter {
-    if (!this._isValidName(name)) {
-      diag.warn(
-        `Invalid metric name ${name}. Defaulting to noop metric implementation.`
-      );
-      return api.NOOP_COUNTER_METRIC;
-    }
-    const opt: api.MetricOptions = {
-      ...DEFAULT_METRIC_OPTIONS,
-      ...options,
-    };
-    const counter = new CounterMetric(
-      name,
-      opt,
-      this._processor,
-      this._resource,
-      this._instrumentationLibrary
-    );
-    this._registerMetric(name, counter);
-    return counter;
+  createUpDownCounter(name: string, options?: metrics.MetricOptions): metrics.UpDownCounter {
+    const descriptor = createInstrumentDescriptor(name, InstrumentType.UP_DOWN_COUNTER, options);
+    const storage = this._meterSharedState.registerMetricStorage(descriptor);
+    return new UpDownCounterInstrument(storage, descriptor);
   }
 
   /**
-   * Creates a new `UpDownCounter` metric. UpDownCounter is a synchronous
-   * instrument and very similar to Counter except that Add(increment)
-   * supports negative increments. It is generally useful for capturing changes
-   * in an amount of resources used, or any quantity that rises and falls
-   * during a request.
-   *
-   * @param name the name of the metric.
-   * @param [options] the metric options.
-   */
-  createUpDownCounter(
-    name: string,
-    options?: api.MetricOptions
-  ): api.UpDownCounter {
-    if (!this._isValidName(name)) {
-      diag.warn(
-        `Invalid metric name ${name}. Defaulting to noop metric implementation.`
-      );
-      return api.NOOP_COUNTER_METRIC;
-    }
-    const opt: api.MetricOptions = {
-      ...DEFAULT_METRIC_OPTIONS,
-      ...options,
-    };
-    const upDownCounter = new UpDownCounterMetric(
-      name,
-      opt,
-      this._processor,
-      this._resource,
-      this._instrumentationLibrary
-    );
-    this._registerMetric(name, upDownCounter);
-    return upDownCounter;
-  }
-
-  /**
-   * Creates a new `ObservableGauge` metric.
-   * @param name the name of the metric.
-   * @param [options] the metric options.
-   * @param [callback] the observable gauge callback
+   * Create a {@link metrics.ObservableGauge} instrument.
    */
   createObservableGauge(
     name: string,
-    options: api.MetricOptions = {},
-    callback?: (observableResult: api.ObservableResult) => unknown
-  ): api.ObservableGauge {
-    if (!this._isValidName(name)) {
-      diag.warn(
-        `Invalid metric name ${name}. Defaulting to noop metric implementation.`
-      );
-      return api.NOOP_OBSERVABLE_GAUGE_METRIC;
-    }
-    const opt: api.MetricOptions = {
-      ...DEFAULT_METRIC_OPTIONS,
-      ...options,
-    };
-    const observableGauge = new ObservableGaugeMetric(
-      name,
-      opt,
-      this._processor,
-      this._resource,
-      this._instrumentationLibrary,
-      callback
-    );
-    this._registerMetric(name, observableGauge);
-    return observableGauge;
-  }
-
-  createObservableCounter(
-    name: string,
-    options: api.MetricOptions = {},
-    callback?: (observableResult: api.ObservableResult) => unknown
-  ): api.ObservableCounter {
-    if (!this._isValidName(name)) {
-      diag.warn(
-        `Invalid metric name ${name}. Defaulting to noop metric implementation.`
-      );
-      return api.NOOP_OBSERVABLE_COUNTER_METRIC;
-    }
-    const opt: api.MetricOptions = {
-      ...DEFAULT_METRIC_OPTIONS,
-      ...options,
-    };
-    const observableCounter = new ObservableCounterMetric(
-      name,
-      opt,
-      this._processor,
-      this._resource,
-      this._instrumentationLibrary,
-      callback
-    );
-    this._registerMetric(name, observableCounter);
-    return observableCounter;
+    options?: metrics.MetricOptions,
+  ): metrics.ObservableGauge {
+    const descriptor = createInstrumentDescriptor(name, InstrumentType.OBSERVABLE_GAUGE, options);
+    const storages = this._meterSharedState.registerAsyncMetricStorage(descriptor);
+    return new ObservableGaugeInstrument(descriptor, storages, this._meterSharedState.observableRegistry);
   }
 
   /**
-   * Creates a new `ObservableUpDownCounter` metric.
-   * @param name the name of the metric.
-   * @param [options] the metric options.
-   * @param [callback] the observable gauge callback
+   * Create a {@link metrics.ObservableCounter} instrument.
+   */
+  createObservableCounter(
+    name: string,
+    options?: metrics.MetricOptions,
+  ): metrics.ObservableCounter {
+    const descriptor = createInstrumentDescriptor(name, InstrumentType.OBSERVABLE_COUNTER, options);
+    const storages = this._meterSharedState.registerAsyncMetricStorage(descriptor);
+    return new ObservableCounterInstrument(descriptor, storages, this._meterSharedState.observableRegistry);
+  }
+
+  /**
+   * Create a {@link metrics.ObservableUpDownCounter} instrument.
    */
   createObservableUpDownCounter(
     name: string,
-    options: api.MetricOptions = {},
-    callback?: (observableResult: api.ObservableResult) => unknown
-  ): api.ObservableUpDownCounter {
-    if (!this._isValidName(name)) {
-      diag.warn(
-        `Invalid metric name ${name}. Defaulting to noop metric implementation.`
-      );
-      return api.NOOP_OBSERVABLE_UP_DOWN_COUNTER_METRIC;
-    }
-    const opt: api.MetricOptions = {
-      ...DEFAULT_METRIC_OPTIONS,
-      ...options,
-    };
-    const observableUpDownCounter = new ObservableUpDownCounterMetric(
-      name,
-      opt,
-      this._processor,
-      this._resource,
-      this._instrumentationLibrary,
-      callback
-    );
-    this._registerMetric(name, observableUpDownCounter);
-    return observableUpDownCounter;
+    options?: metrics.MetricOptions,
+  ): metrics.ObservableUpDownCounter {
+    const descriptor = createInstrumentDescriptor(name, InstrumentType.OBSERVABLE_UP_DOWN_COUNTER, options);
+    const storages = this._meterSharedState.registerAsyncMetricStorage(descriptor);
+    return new ObservableUpDownCounterInstrument(descriptor, storages, this._meterSharedState.observableRegistry);
   }
 
   /**
-   * Collects all the metrics created with this `Meter` for export.
-   *
-   * Utilizes the processor to create checkpoints of the current values in
-   * each aggregator belonging to the metrics that were created with this
-   * meter instance.
+   * @see {@link metrics.Meter.addBatchObservableCallback}
    */
-  async collect(): Promise<void> {
-    // after this all remaining metrics can be run
-    const metricsRecords = Array.from(this._metrics.values()).map(metric => {
-      return metric.getMetricRecord();
-    });
-
-    await Promise.all(metricsRecords).then(records => {
-      records.forEach(metrics => {
-        metrics.forEach(metric => this._processor.process(metric));
-      });
-    });
-  }
-
-  getProcessor(): Processor {
-    return this._processor;
-  }
-
-  shutdown(): Promise<void> {
-    if (this._isShutdown) {
-      return this._shuttingDownPromise;
-    }
-    this._isShutdown = true;
-
-    this._shuttingDownPromise = new Promise((resolve, reject) => {
-      Promise.resolve()
-        .then(() => {
-          return this._controller.shutdown();
-        })
-        .then(resolve)
-        .catch(e => {
-          reject(e);
-        });
-    });
-    return this._shuttingDownPromise;
+  addBatchObservableCallback(callback: metrics.BatchObservableCallback, observables: metrics.Observable[]) {
+    this._meterSharedState.observableRegistry.addBatchCallback(callback, observables);
   }
 
   /**
-   * Registers metric to register.
-   * @param name The name of the metric.
-   * @param metric The metric to register.
+   * @see {@link metrics.Meter.removeBatchObservableCallback}
    */
-  private _registerMetric<T extends BaseBoundInstrument>(
-    name: string,
-    metric: Metric<T>
-  ): void {
-    if (this._metrics.has(name)) {
-      diag.error(`A metric with the name ${name} has already been registered.`);
-      return;
-    }
-    this._metrics.set(name, metric);
-  }
-
-  /**
-   * Ensure a metric name conforms to the following rules:
-   *
-   * 1. They are non-empty strings
-   *
-   * 2. The first character must be non-numeric, non-space, non-punctuation
-   *
-   * 3. Subsequent characters must be belong to the alphanumeric characters,
-   *    '_', '.', and '-'.
-   *
-   * Names are case insensitive
-   *
-   * @param name Name of metric to be created
-   */
-  private _isValidName(name: string): boolean {
-    return Boolean(name.match(/^[a-z][a-z0-9_.-]{0,62}$/i));
+  removeBatchObservableCallback(callback: metrics.BatchObservableCallback, observables: metrics.Observable[]) {
+    this._meterSharedState.observableRegistry.removeBatchCallback(callback, observables);
   }
 }

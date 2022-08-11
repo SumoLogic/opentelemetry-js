@@ -15,18 +15,8 @@
  */
 
 import { diag } from '@opentelemetry/api';
-import {
-  Counter,
-  ObservableGauge,
-  Histogram,
-} from '@opentelemetry/api-metrics';
 import { ExportResultCode } from '@opentelemetry/core';
-import {
-  OTLPExporterNodeConfigBase,
-  otlpTypes,
-} from '@opentelemetry/exporter-trace-otlp-http';
-import { getExportRequestProto } from '@opentelemetry/exporter-trace-otlp-proto';
-import * as metrics from '@opentelemetry/sdk-metrics-base';
+import { getExportRequestProto, ServiceClientType } from '@opentelemetry/otlp-proto-exporter-base';
 import * as assert from 'assert';
 import * as http from 'http';
 import * as sinon from 'sinon';
@@ -40,63 +30,114 @@ import {
   mockCounter,
   MockedResponse,
   mockObservableGauge,
-  mockHistogram,
+  mockHistogram, collect, setUp, shutdown,
 } from './metricsHelper';
+import { AggregationTemporality, ResourceMetrics } from '@opentelemetry/sdk-metrics-base';
+import { OTLPMetricExporterOptions } from '@opentelemetry/exporter-metrics-otlp-http';
+import { Stream, PassThrough } from 'stream';
+import { OTLPExporterNodeConfigBase } from '@opentelemetry/otlp-exporter-base';
+import { IExportMetricsServiceRequest } from '@opentelemetry/otlp-transformer';
 
-const fakeRequest = {
-  end: function () {},
-  on: function () {},
-  write: function () {},
-};
+let fakeRequest: PassThrough;
 
 describe('OTLPMetricExporter - node with proto over http', () => {
   let collectorExporter: OTLPMetricExporter;
-  let collectorExporterConfig: OTLPExporterNodeConfigBase;
-  let metrics: metrics.MetricRecord[];
+  let collectorExporterConfig: OTLPExporterNodeConfigBase & OTLPMetricExporterOptions;
+  let metrics: ResourceMetrics;
+
+  afterEach(() => {
+    fakeRequest = new Stream.PassThrough();
+    sinon.restore();
+  });
 
   describe('when configuring via environment', () => {
     const envSource = process.env;
-    it('should use url defined in env', () => {
-      envSource.OTEL_EXPORTER_OTLP_ENDPOINT = 'http://foo.bar/v1/metrics';
+    it('should use url defined in env that ends with root path and append version and signal path', () => {
+      envSource.OTEL_EXPORTER_OTLP_ENDPOINT = 'http://foo.bar/';
       const collectorExporter = new OTLPMetricExporter();
       assert.strictEqual(
-        collectorExporter.url,
-        envSource.OTEL_EXPORTER_OTLP_ENDPOINT
+        collectorExporter._otlpExporter.url,
+        `${envSource.OTEL_EXPORTER_OTLP_ENDPOINT}v1/metrics`
       );
       envSource.OTEL_EXPORTER_OTLP_ENDPOINT = '';
     });
-    it('should use url defined in env and append version and signal when not present', () => {
+    it('should use url defined in env without checking if path is already present', () => {
+      envSource.OTEL_EXPORTER_OTLP_ENDPOINT = 'http://foo.bar/v1/metrics';
+      const collectorExporter = new OTLPMetricExporter();
+      assert.strictEqual(
+        collectorExporter._otlpExporter.url,
+        `${envSource.OTEL_EXPORTER_OTLP_ENDPOINT}/v1/metrics`
+      );
+      envSource.OTEL_EXPORTER_OTLP_ENDPOINT = '';
+    });
+    it('should use url defined in env and append version and signal', () => {
       envSource.OTEL_EXPORTER_OTLP_ENDPOINT = 'http://foo.bar';
       const collectorExporter = new OTLPMetricExporter();
       assert.strictEqual(
-        collectorExporter.url,
+        collectorExporter._otlpExporter.url,
         `${envSource.OTEL_EXPORTER_OTLP_ENDPOINT}/v1/metrics`
       );
       envSource.OTEL_EXPORTER_OTLP_ENDPOINT = '';
     });
     it('should override global exporter url with signal url defined in env', () => {
-      envSource.OTEL_EXPORTER_OTLP_ENDPOINT = 'http://foo.bar';
-      envSource.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT = 'http://foo.metrics';
+      envSource.OTEL_EXPORTER_OTLP_ENDPOINT = 'http://foo.bar/';
+      envSource.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT = 'http://foo.metrics/';
       const collectorExporter = new OTLPMetricExporter();
       assert.strictEqual(
-        collectorExporter.url,
+        collectorExporter._otlpExporter.url,
         envSource.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT
       );
       envSource.OTEL_EXPORTER_OTLP_ENDPOINT = '';
       envSource.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT = '';
     });
+    it('should add root path when signal url defined in env contains no path and no root path', () => {
+      envSource.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT = 'http://foo.bar';
+      const collectorExporter = new OTLPMetricExporter();
+      assert.strictEqual(
+        collectorExporter._otlpExporter.url,
+        `${envSource.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT}/`
+      );
+      envSource.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT = '';
+    });
+    it('should not add root path when signal url defined in env contains root path but no path', () => {
+      envSource.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT = 'http://foo.bar/';
+      const collectorExporter = new OTLPMetricExporter();
+      assert.strictEqual(
+        collectorExporter._otlpExporter.url,
+        `${envSource.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT}`
+      );
+      envSource.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT = '';
+    });
+    it('should not add root path when signal url defined in env contains path', () => {
+      envSource.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT = 'http://foo.bar/v1/metrics';
+      const collectorExporter = new OTLPMetricExporter();
+      assert.strictEqual(
+        collectorExporter._otlpExporter.url,
+        `${envSource.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT}`
+      );
+      envSource.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT = '';
+    });
+    it('should not add root path when signal url defined in env contains path and ends in /', () => {
+      envSource.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT = 'http://foo.bar/v1/metrics/';
+      const collectorExporter = new OTLPMetricExporter();
+      assert.strictEqual(
+        collectorExporter._otlpExporter.url,
+        `${envSource.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT}`
+      );
+      envSource.OTEL_EXPORTER_OTLP_METRICS_ENDPOINT = '';
+    });
     it('should use headers defined via env', () => {
       envSource.OTEL_EXPORTER_OTLP_HEADERS = 'foo=bar';
       const collectorExporter = new OTLPMetricExporter();
-      assert.strictEqual(collectorExporter.headers.foo, 'bar');
+      assert.strictEqual(collectorExporter._otlpExporter.headers.foo, 'bar');
       envSource.OTEL_EXPORTER_OTLP_HEADERS = '';
     });
     it('should override global headers config with signal headers defined via env', () => {
       envSource.OTEL_EXPORTER_OTLP_HEADERS = 'foo=bar,bar=foo';
       envSource.OTEL_EXPORTER_OTLP_METRICS_HEADERS = 'foo=boo';
       const collectorExporter = new OTLPMetricExporter();
-      assert.strictEqual(collectorExporter.headers.foo, 'boo');
-      assert.strictEqual(collectorExporter.headers.bar, 'foo');
+      assert.strictEqual(collectorExporter._otlpExporter.headers.foo, 'boo');
+      assert.strictEqual(collectorExporter._otlpExporter.headers.bar, 'foo');
       envSource.OTEL_EXPORTER_OTLP_METRICS_HEADERS = '';
       envSource.OTEL_EXPORTER_OTLP_HEADERS = '';
     });
@@ -109,116 +150,136 @@ describe('OTLPMetricExporter - node with proto over http', () => {
           foo: 'bar',
         },
         hostname: 'foo',
-        attributes: {},
         url: 'http://foo.bar.com',
         keepAlive: true,
         httpAgentOptions: { keepAliveMsecs: 2000 },
+        temporalityPreference: AggregationTemporality.CUMULATIVE
       };
       collectorExporter = new OTLPMetricExporter(collectorExporterConfig);
-      // Overwrites the start time to make tests consistent
-      Object.defineProperty(collectorExporter, '_startTime', {
-        value: 1592602232694000000,
-      });
-      metrics = [];
-      const counter: metrics.Metric<metrics.BoundCounter> &
-        Counter = mockCounter();
-      const observableGauge: metrics.Metric<metrics.BoundObservable> &
-        ObservableGauge = mockObservableGauge(observableResult => {
+      setUp();
+
+      const counter = mockCounter();
+      mockObservableGauge(observableResult => {
         observableResult.observe(3, {});
         observableResult.observe(6, {});
       });
-      const histogram: metrics.Metric<metrics.BoundHistogram> &
-        Histogram = mockHistogram();
+      const histogram = mockHistogram();
 
       counter.add(1);
       histogram.record(7);
       histogram.record(14);
 
-      metrics.push((await counter.getMetricRecord())[0]);
-      metrics.push((await observableGauge.getMetricRecord())[0]);
-      metrics.push((await histogram.getMetricRecord())[0]);
+      const { resourceMetrics, errors } = await collect();
+      assert.strictEqual(errors.length, 0);
+      metrics = resourceMetrics;
     });
-    afterEach(() => {
+
+    afterEach(async () => {
+      await shutdown();
       sinon.restore();
     });
 
     it('should open the connection', done => {
-      collectorExporter.export(metrics, () => {});
+      collectorExporter.export(metrics, () => {
+      });
 
-      sinon.stub(http, 'request').callsFake((options: any) => {
+      sinon.stub(http, 'request').callsFake((options: any, cb: any) => {
         assert.strictEqual(options.hostname, 'foo.bar.com');
         assert.strictEqual(options.method, 'POST');
         assert.strictEqual(options.path, '/');
+
+        const mockRes = new MockedResponse(200);
+        cb(mockRes);
+        mockRes.send('success');
         done();
         return fakeRequest as any;
       });
     });
 
     it('should set custom headers', done => {
-      collectorExporter.export(metrics, () => {});
+      collectorExporter.export(metrics, () => {
+      });
 
-      sinon.stub(http, 'request').callsFake((options: any) => {
+      sinon.stub(http, 'request').callsFake((options: any, cb: any) => {
         assert.strictEqual(options.headers['foo'], 'bar');
+
+        const mockRes = new MockedResponse(200);
+        cb(mockRes);
+        mockRes.send('success');
+
         done();
         return fakeRequest as any;
       });
     });
 
     it('should have keep alive and keepAliveMsecs option set', done => {
-      collectorExporter.export(metrics, () => {});
+      collectorExporter.export(metrics, () => {
+      });
 
-      sinon.stub(http, 'request').callsFake((options: any) => {
+      sinon.stub(http, 'request').callsFake((options: any, cb: any) => {
         assert.strictEqual(options.agent.keepAlive, true);
         assert.strictEqual(options.agent.options.keepAliveMsecs, 2000);
+
+        const mockRes = new MockedResponse(200);
+        cb(mockRes);
+        mockRes.send('success');
+
         done();
         return fakeRequest as any;
       });
     });
 
     it('should successfully send metrics', done => {
-      collectorExporter.export(metrics, () => {});
+      const fakeRequest = new Stream.PassThrough();
+      sinon.stub(http, 'request').returns(fakeRequest as any);
 
-      sinon.stub(http, 'request').returns({
-        end: () => {},
-        on: () => {},
-        write: (...writeArgs: any[]) => {
-          const ExportTraceServiceRequestProto = getExportRequestProto();
-          const data = ExportTraceServiceRequestProto?.decode(writeArgs[0]);
-          const json = data?.toJSON() as otlpTypes.opentelemetryProto.collector.metrics.v1.ExportMetricsServiceRequest;
+      let buff = Buffer.from('');
 
-          const metric1 =
-            json.resourceMetrics[0].instrumentationLibraryMetrics[0].metrics[0];
-          const metric2 =
-            json.resourceMetrics[0].instrumentationLibraryMetrics[0].metrics[1];
-          const metric3 =
-            json.resourceMetrics[0].instrumentationLibraryMetrics[0].metrics[2];
+      fakeRequest.on('end', () => {
+        const ExportTraceServiceRequestProto = getExportRequestProto(ServiceClientType.METRICS);
+        const data = ExportTraceServiceRequestProto.decode(buff);
+        const json = data?.toJSON() as IExportMetricsServiceRequest;
 
-          assert.ok(typeof metric1 !== 'undefined', "counter doesn't exist");
-          ensureExportedCounterIsCorrect(
-            metric1,
-            metric1.intSum?.dataPoints[0].timeUnixNano
-          );
-          assert.ok(typeof metric2 !== 'undefined', "observable gauge doesn't exist");
-          ensureExportedObservableGaugeIsCorrect(
-            metric2,
-            metric2.doubleGauge?.dataPoints[0].timeUnixNano
-          );
-          assert.ok(
-            typeof metric3 !== 'undefined',
-            "value recorder doesn't exist"
-          );
-          ensureExportedHistogramIsCorrect(
-            metric3,
-            metric3.intHistogram?.dataPoints[0].timeUnixNano,
-            [0, 100],
-            ['0', '2', '0']
-          );
+        const metric1 = json.resourceMetrics[0].scopeMetrics[0].metrics[0];
+        const metric2 = json.resourceMetrics[0].scopeMetrics[0].metrics[1];
+        const metric3 = json.resourceMetrics[0].scopeMetrics[0].metrics[2];
 
-          ensureExportMetricsServiceRequestIsSet(json);
+        assert.ok(typeof metric1 !== 'undefined', "counter doesn't exist");
+        ensureExportedCounterIsCorrect(
+          metric1,
+          metric1.sum?.dataPoints[0].timeUnixNano,
+          metric1.sum?.dataPoints[0].startTimeUnixNano
+        );
+        assert.ok(typeof metric2 !== 'undefined', "observable gauge doesn't exist");
+        ensureExportedObservableGaugeIsCorrect(
+          metric2,
+          metric2.gauge?.dataPoints[0].timeUnixNano,
+          metric2.gauge?.dataPoints[0].startTimeUnixNano
+        );
+        assert.ok(
+          typeof metric3 !== 'undefined',
+          "value recorder doesn't exist"
+        );
+        ensureExportedHistogramIsCorrect(
+          metric3,
+          metric3.histogram?.dataPoints[0].timeUnixNano,
+          metric3.histogram?.dataPoints[0].startTimeUnixNano,
+          [0, 100],
+          ['0', '2', '0']
+        );
 
-          done();
-        },
-      } as any);
+        ensureExportMetricsServiceRequestIsSet(json);
+        done();
+      });
+
+      fakeRequest.on('data', chunk => {
+        buff = Buffer.concat([buff, chunk]);
+      });
+
+      const clock = sinon.useFakeTimers();
+      collectorExporter.export(metrics, () => { });
+      clock.tick(200);
+      clock.restore();
     });
 
     it('should log the successful message', done => {

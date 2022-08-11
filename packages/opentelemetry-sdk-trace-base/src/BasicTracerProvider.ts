@@ -15,12 +15,12 @@
  */
 
 import {
-  TracerProvider,
-  trace,
   context,
+  diag,
   propagation,
   TextMapPropagator,
-  diag,
+  trace,
+  TracerProvider,
 } from '@opentelemetry/api';
 import {
   CompositePropagator,
@@ -37,6 +37,7 @@ import { NoopSpanProcessor } from './export/NoopSpanProcessor';
 import { SDKRegistrationConfig, TracerConfig } from './types';
 import { SpanExporter } from './export/SpanExporter';
 import { BatchSpanProcessor } from './platform';
+import { reconfigureLimits } from './utility';
 
 export type PROPAGATOR_FACTORY = () => TextMapPropagator;
 export type EXPORTER_FACTORY = () => SpanExporter;
@@ -73,7 +74,7 @@ export class BasicTracerProvider implements TracerProvider {
   readonly resource: Resource;
 
   constructor(config: TracerConfig = {}) {
-    const mergedConfig = merge({}, DEFAULT_CONFIG, config);
+    const mergedConfig = merge({}, DEFAULT_CONFIG, reconfigureLimits(config));
     this.resource = mergedConfig.resource ?? Resource.empty();
     this.resource = Resource.default().merge(this.resource);
     this._config = Object.assign({}, mergedConfig, {
@@ -89,10 +90,10 @@ export class BasicTracerProvider implements TracerProvider {
     }
   }
 
-  getTracer(name: string, version?: string): Tracer {
-    const key = `${name}@${version || ''}`;
+  getTracer(name: string, version?: string, options?: { schemaUrl?: string }): Tracer {
+    const key = `${name}@${version || ''}:${options?.schemaUrl || ''}`;
     if (!this._tracers.has(key)) {
-      this._tracers.set(key, new Tracer({ name, version }, this._config, this));
+      this._tracers.set(key, new Tracer({ name, version, schemaUrl: options?.schemaUrl }, this._config, this));
     }
 
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
@@ -201,12 +202,23 @@ export class BasicTracerProvider implements TracerProvider {
     return this.activeSpanProcessor.shutdown();
   }
 
+  /**
+   * TS cannot yet infer the type of this.constructor:
+   * https://github.com/Microsoft/TypeScript/issues/3841#issuecomment-337560146
+   * There is no need to override either of the getters in your child class.
+   * The type of the registered component maps should be the same across all
+   * classes in the inheritance tree.
+   */
   protected _getPropagator(name: string): TextMapPropagator | undefined {
-    return BasicTracerProvider._registeredPropagators.get(name)?.();
+    return (
+      (this.constructor as typeof BasicTracerProvider)._registeredPropagators
+    ).get(name)?.();
   }
 
   protected _getSpanExporter(name: string): SpanExporter | undefined {
-    return BasicTracerProvider._registeredExporters.get(name)?.();
+    return (
+      (this.constructor as typeof BasicTracerProvider)._registeredExporters
+    ).get(name)?.();
   }
 
   protected _buildPropagatorFromEnv(): TextMapPropagator | undefined {

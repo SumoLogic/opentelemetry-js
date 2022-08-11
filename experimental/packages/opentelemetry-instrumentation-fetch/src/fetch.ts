@@ -27,6 +27,7 @@ import { AttributeNames } from './enums/AttributeNames';
 import { SemanticAttributes } from '@opentelemetry/semantic-conventions';
 import { FetchError, FetchResponse, SpanData } from './types';
 import { VERSION } from './version';
+import { _globalThis } from '@opentelemetry/core';
 
 // how long to wait for observer to collect information about resources
 // this is needed as event "load" is called before observer
@@ -62,14 +63,14 @@ export interface FetchInstrumentationConfig extends InstrumentationConfig {
   ignoreUrls?: Array<string | RegExp>;
   /** Function for adding custom attributes on the span */
   applyCustomAttributesOnSpan?: FetchCustomAttributeFunction;
+  // Ignore adding network events as span events
+  ignoreNetworkEvents?: boolean;
 }
 
 /**
  * This class represents a fetch plugin for auto instrumentation
  */
-export class FetchInstrumentation extends InstrumentationBase<
-  Promise<Response>
-> {
+export class FetchInstrumentation extends InstrumentationBase<Promise<Response>> {
   readonly component: string = 'fetch';
   readonly version: string = VERSION;
   moduleName = this.component;
@@ -106,7 +107,9 @@ export class FetchInstrumentation extends InstrumentationBase<
       },
       api.trace.setSpan(api.context.active(), span)
     );
-    web.addSpanNetworkEvents(childSpan, corsPreFlightRequest);
+    if (!this._getConfig().ignoreNetworkEvents) {
+      web.addSpanNetworkEvents(childSpan, corsPreFlightRequest);
+    }
     childSpan.end(
       corsPreFlightRequest[web.PerformanceTimingNames.RESPONSE_END]
     );
@@ -158,7 +161,7 @@ export class FetchInstrumentation extends InstrumentationBase<
       api.propagation.inject(api.context.active(), options.headers, {
         set: (h, k, v) => h.set(k, typeof v === 'string' ? v : String(v)),
       });
-    } else if(options.headers instanceof Headers) {
+    } else if (options.headers instanceof Headers) {
       api.propagation.inject(api.context.active(), options.headers, {
         set: (h, k, v) => h.set(k, typeof v === 'string' ? v : String(v)),
       });
@@ -248,7 +251,9 @@ export class FetchInstrumentation extends InstrumentationBase<
         this._addChildSpan(span, corsPreFlightRequest);
         this._markResourceAsUsed(corsPreFlightRequest);
       }
-      web.addSpanNetworkEvents(span, mainRequest);
+      if (!this._getConfig().ignoreNetworkEvents) {
+        web.addSpanNetworkEvents(span, mainRequest);
+      }
     }
   }
 
@@ -288,14 +293,16 @@ export class FetchInstrumentation extends InstrumentationBase<
   /**
    * Patches the constructor of fetch
    */
-  private _patchConstructor(): (original: Window['fetch']) => Window['fetch'] {
+  private _patchConstructor(): (original: typeof fetch) => typeof fetch {
     return original => {
       const plugin = this;
       return function patchConstructor(
-        this: Window,
-        ...args: Parameters<Window['fetch']>
+        this: typeof globalThis,
+        ...args: Parameters<typeof fetch>
       ): Promise<Response> {
-        const url = args[0] instanceof Request ? args[0].url : args[0];
+        const self = this;
+        const url = web.parseUrl(args[0] instanceof Request ? args[0].url : args[0]).href;
+
         const options = args[0] instanceof Request ? args[0] : args[1] || {};
         const createdSpan = plugin._createSpan(url, options);
         if (!createdSpan) {
@@ -314,16 +321,24 @@ export class FetchInstrumentation extends InstrumentationBase<
 
         function endSpanOnSuccess(span: api.Span, response: Response) {
           plugin._applyAttributesAfterFetch(span, options, response);
+          const spanResponse = {
+            status: response.status,
+            statusText: response.statusText,
+            headers: response.headers,
+            url
+          };
           if (response.status >= 200 && response.status < 400) {
-            plugin._endSpan(span, spanData, response);
-          } else {
-            plugin._endSpan(span, spanData, {
-              status: response.status,
-              statusText: response.statusText,
-              url,
-            });
+            if (response.url != null && response.url !== '') {
+              spanResponse.url = url;
+            }
           }
+          plugin._endSpan(span, spanData, {
+            status: response.status,
+            statusText: response.statusText,
+            url,
+          });
         }
+
         function onSuccess(
           span: api.Span,
           resolve: (value: Response | PromiseLike<Response>) => void,
@@ -377,11 +392,13 @@ export class FetchInstrumentation extends InstrumentationBase<
             () => {
               plugin._addHeaders(options, url);
               plugin._tasksCount++;
+              // TypeScript complains about arrow function captured a this typed as globalThis
+              // ts(7041)
               return original
-                .apply(this, options instanceof Request ? [options] : [url, options])
+                .apply(self, options instanceof Request ? [options] : [url, options])
                 .then(
-                  onSuccess.bind(this, createdSpan, resolve),
-                  onError.bind(this, createdSpan, reject)
+                  onSuccess.bind(self, createdSpan, resolve),
+                  onError.bind(self, createdSpan, reject)
                 );
             }
           );
@@ -420,18 +437,16 @@ export class FetchInstrumentation extends InstrumentationBase<
   private _prepareSpanData(spanUrl: string): SpanData {
     const startTime = core.hrTime();
     const entries: PerformanceResourceTiming[] = [];
-    if (typeof window.PerformanceObserver === 'undefined') {
+    if (typeof PerformanceObserver !== 'function') {
       return { entries, startTime, spanUrl };
     }
 
-    const observer: PerformanceObserver = new PerformanceObserver(list => {
+    const observer = new PerformanceObserver(list => {
       const perfObsEntries = list.getEntries() as PerformanceResourceTiming[];
-      const urlNormalizingAnchor = web.getUrlNormalizingAnchor();
-      urlNormalizingAnchor.href = spanUrl;
       perfObsEntries.forEach(entry => {
         if (
           entry.initiatorType === 'fetch' &&
-          entry.name === urlNormalizingAnchor.href
+          entry.name === spanUrl
         ) {
           entries.push(entry);
         }
@@ -447,18 +462,18 @@ export class FetchInstrumentation extends InstrumentationBase<
    * implements enable function
    */
   override enable(): void {
-    if (isWrapped(window.fetch)) {
-      this._unwrap(window, 'fetch');
+    if (isWrapped(fetch)) {
+      this._unwrap(_globalThis, 'fetch');
       this._diag.debug('removing previous patch for constructor');
     }
-    this._wrap(window, 'fetch', this._patchConstructor());
+    this._wrap(_globalThis, 'fetch', this._patchConstructor());
   }
 
   /**
    * implements unpatch function
    */
   override disable(): void {
-    this._unwrap(window, 'fetch');
+    this._unwrap(_globalThis, 'fetch');
     this._usedResources = new WeakSet<PerformanceResourceTiming>();
   }
 }

@@ -311,7 +311,7 @@ export class HttpInstrumentation extends InstrumentationBase<Http> {
           if (response.aborted && !response.complete) {
             status = { code: SpanStatusCode.ERROR };
           } else {
-            status = utils.parseResponseStatus(response.statusCode);
+            status = { code: utils.parseResponseStatus(SpanKind.CLIENT, response.statusCode) };
           }
 
           span.setStatus(status);
@@ -333,7 +333,9 @@ export class HttpInstrumentation extends InstrumentationBase<Http> {
         });
         response.on('error', (error: Err) => {
           this._diag.debug('outgoingRequest on error()', error);
-          utils.setSpanWithError(span, error, response);
+          utils.setSpanWithError(span, error);
+          const code = utils.parseResponseStatus(SpanKind.CLIENT, response.statusCode);
+          span.setStatus({ code, message: error.message });
           this._closeHttpSpan(span);
         });
       }
@@ -346,7 +348,7 @@ export class HttpInstrumentation extends InstrumentationBase<Http> {
     });
     request.on('error', (error: Err) => {
       this._diag.debug('outgoingRequest on request error()', error);
-      utils.setSpanWithError(span, error, request);
+      utils.setSpanWithError(span, error);
       this._closeHttpSpan(span);
     });
 
@@ -382,7 +384,16 @@ export class HttpInstrumentation extends InstrumentationBase<Http> {
         utils.isIgnored(
           pathname,
           instrumentation._getConfig().ignoreIncomingPaths,
-          (e: Error) => instrumentation._diag.error('caught ignoreIncomingPaths error: ', e)
+          (e: unknown) => instrumentation._diag.error('caught ignoreIncomingPaths error: ', e)
+        ) ||
+        safeExecuteInTheMiddle(
+          () => instrumentation._getConfig().ignoreIncomingRequestHook?.(request),
+          (e: unknown) => {
+            if (e != null) {
+              instrumentation._diag.error('caught ignoreIncomingRequestHook error: ', e);
+            }
+          },
+          true
         )
       ) {
         return context.with(suppressTracing(context.active()), () => {
@@ -461,7 +472,7 @@ export class HttpInstrumentation extends InstrumentationBase<Http> {
 
             span
               .setAttributes(attributes)
-              .setStatus(utils.parseResponseStatus(response.statusCode));
+              .setStatus({ code: utils.parseResponseStatus(SpanKind.SERVER, response.statusCode) });
 
             if (instrumentation._getConfig().applyCustomAttributesOnSpan) {
               safeExecuteInTheMiddle(
@@ -534,7 +545,16 @@ export class HttpInstrumentation extends InstrumentationBase<Http> {
         utils.isIgnored(
           origin + pathname,
           instrumentation._getConfig().ignoreOutgoingUrls,
-          (e: Error) => instrumentation._diag.error('caught ignoreOutgoingUrls error: ', e)
+          (e: unknown) => instrumentation._diag.error('caught ignoreOutgoingUrls error: ', e)
+        ) ||
+        safeExecuteInTheMiddle(
+          () => instrumentation._getConfig().ignoreOutgoingRequestHook?.(optionsParsed),
+          (e: unknown) => {
+            if (e != null) {
+              instrumentation._diag.error('caught ignoreOutgoingRequestHook error: ', e);
+            }
+          },
+          true
         )
       ) {
         return original.apply(this, [optionsParsed, ...args]);
@@ -663,7 +683,7 @@ export class HttpInstrumentation extends InstrumentationBase<Http> {
   private _callStartSpanHook(
     request: http.IncomingMessage | http.RequestOptions,
     hookFunc: Function | undefined,
-    ) {
+  ) {
     if(typeof hookFunc === 'function'){
       return safeExecuteInTheMiddle(
         () => hookFunc(request),
@@ -685,6 +705,6 @@ export class HttpInstrumentation extends InstrumentationBase<Http> {
         captureRequestHeaders: utils.headerCapture('request', config.headersToSpanAttributes?.server?.requestHeaders ?? []),
         captureResponseHeaders: utils.headerCapture('response', config.headersToSpanAttributes?.server?.responseHeaders ?? []),
       }
-    }
+    };
   }
 }

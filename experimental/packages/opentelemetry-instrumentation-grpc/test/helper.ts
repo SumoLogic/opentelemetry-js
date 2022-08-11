@@ -104,8 +104,8 @@ const checkEqual = (x: TestRequestResponse | TestRequestResponse[]) => (
   x instanceof Array && y instanceof Array
     ? arrayIsEqual(requestEqual)(x as any)(y as any)
     : !(x instanceof Array) && !(y instanceof Array)
-    ? requestEqual(x)(y)
-    : false;
+      ? requestEqual(x)(y)
+      : false;
 
 export const runTests = (
   plugin: GrpcInstrumentation,
@@ -292,7 +292,7 @@ export const runTests = (
                 'Unary Method Error',
                 call.request.num
               ) as grpcJs.ServiceError
-            )
+          )
           : callback(null, { num: call.request.num });
       },
 
@@ -304,7 +304,7 @@ export const runTests = (
                 'Unary Method Error',
                 call.request.num
               ) as grpcJs.ServiceError
-            )
+          )
           : callback(null, { num: call.request.num });
       },
 
@@ -646,6 +646,16 @@ export const runTests = (
       });
     };
 
+    const runClientMethodTest = (
+      method: typeof methodList[0]
+    ) => {
+      it(`should assign original properties for grpc remote method ${method.methodName}`, async () => {
+        const patchedClientMethod = (client as any)[method.methodName];
+        const properties = Object.keys(patchedClientMethod);
+        assert.ok(properties.length);
+      });
+    };
+
     describe('enable()', () => {
       const provider = new NodeTracerProvider();
       provider.addSpanProcessor(new SimpleSpanProcessor(memoryExporter));
@@ -799,6 +809,31 @@ export const runTests = (
         }create spans for grpc remote method ${method.methodName}`, () => {
           runTest(method, provider, checkSpans[method.methodName]);
         });
+      });
+    });
+
+    describe('Test assigning properties from original client method to patched client method', () => {
+      before(async () => {
+        plugin.disable();
+        plugin.setConfig({});
+        plugin.enable();
+
+        const packageDefinition = await protoLoader.load(PROTO_PATH, options);
+        const proto = grpc.loadPackageDefinition(packageDefinition).pkg_test;
+
+        client = createClient(grpc, proto);
+      });
+
+      after(done => {
+        client.close();
+        server.tryShutdown(() => {
+          plugin.disable();
+          done();
+        });
+      });
+
+      methodList.map(method => {
+        runClientMethodTest(method);
       });
     });
   });

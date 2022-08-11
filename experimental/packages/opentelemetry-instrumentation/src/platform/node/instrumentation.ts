@@ -59,6 +59,21 @@ export abstract class InstrumentationBase<T = any>
     }
   }
 
+  private _warnOnPreloadedModules(): void {
+    this._modules.forEach((module: InstrumentationModuleDefinition<T>) => {
+      const { name } = module;
+      try {
+        const resolvedModule = require.resolve(name);
+        if (require.cache[resolvedModule]) {
+          // Module is already cached, which means the instrumentation hook might not work
+          this._diag.warn(`Module ${name} has been loaded before ${this.instrumentationName} so it might not work, please initialize it before requiring ${name}`);
+        }
+      } catch {
+        // Module isn't available, we can simply skip
+      }
+    });
+  }
+
   private _extractPackageVersion(baseDir: string): string | undefined {
     try {
       // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -67,7 +82,7 @@ export abstract class InstrumentationBase<T = any>
     } catch (error) {
       diag.warn('Failed extracting version', baseDir);
     }
-    
+
     return undefined;
   }
 
@@ -80,7 +95,9 @@ export abstract class InstrumentationBase<T = any>
     if (!baseDir) {
       if (typeof module.patch === 'function') {
         module.moduleExports = exports;
-        return module.patch(exports);
+        if (this._enabled) {
+          return module.patch(exports);
+        }
       }
       return exports;
     }
@@ -99,18 +116,23 @@ export abstract class InstrumentationBase<T = any>
           }
         }
       }
-    } else {
-      // internal file
-      const files = module.files ?? [];
-      const file = files.find(f => f.name === name);
-      if (file && isSupported(file.supportedVersions, version, module.includePrerelease)) {
-        file.moduleExports = exports;
-        if (this._enabled) {
-          return file.patch(exports, module.moduleVersion);
-        }
-      }
+      return exports;
     }
-    return exports;
+    // internal file
+    const files = module.files ?? [];
+    const supportedFileInstrumentations = files
+      .filter(f => f.name === name)
+      .filter(f => isSupported(f.supportedVersions, version, module.includePrerelease));
+    return supportedFileInstrumentations.reduce<T>(
+      (patchedExports, file) => {
+        file.moduleExports = patchedExports;
+        if (this._enabled) {
+          return file.patch(patchedExports, module.moduleVersion);
+        }
+        return patchedExports;
+      },
+      exports,
+    );
   }
 
   public enable(): void {
@@ -134,6 +156,7 @@ export abstract class InstrumentationBase<T = any>
       return;
     }
 
+    this._warnOnPreloadedModules();
     for (const module of this._modules) {
       this._hooks.push(
         RequireInTheMiddle(

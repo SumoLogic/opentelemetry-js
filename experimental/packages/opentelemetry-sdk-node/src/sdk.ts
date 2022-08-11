@@ -14,25 +14,26 @@
  * limitations under the License.
  */
 
-import { TextMapPropagator } from '@opentelemetry/api';
+import { ContextManager, TextMapPropagator } from '@opentelemetry/api';
 import { metrics } from '@opentelemetry/api-metrics';
-import { ContextManager } from '@opentelemetry/api';
-import { MeterConfig, MeterProvider } from '@opentelemetry/sdk-metrics-base';
 import {
   InstrumentationOption,
-  registerInstrumentations,
+  registerInstrumentations
 } from '@opentelemetry/instrumentation';
-import { NodeTracerConfig, NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
-import { awsEc2Detector } from '@opentelemetry/resource-detector-aws';
-import { gcpDetector } from '@opentelemetry/resource-detector-gcp';
 import {
   detectResources,
   envDetector,
   processDetector,
   Resource,
-  ResourceDetectionConfig,
+  ResourceDetectionConfig
 } from '@opentelemetry/resources';
-import { BatchSpanProcessor, SpanProcessor } from '@opentelemetry/sdk-trace-base';
+import { MeterProvider, MetricReader } from '@opentelemetry/sdk-metrics-base';
+import {
+  BatchSpanProcessor,
+  SpanProcessor
+} from '@opentelemetry/sdk-trace-base';
+import { NodeTracerConfig, NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
+import { SemanticResourceAttributes } from '@opentelemetry/semantic-conventions';
 import { NodeSDKConfiguration } from './types';
 
 /** This class represents everything needed to register a fully configured OpenTelemetry Node.js SDK */
@@ -44,7 +45,7 @@ export class NodeSDK {
     textMapPropagator?: TextMapPropagator;
   };
   private _instrumentations: InstrumentationOption[];
-  private _meterProviderConfig?: MeterConfig;
+  private _metricReader?: MetricReader;
 
   private _resource: Resource;
 
@@ -52,12 +53,15 @@ export class NodeSDK {
 
   private _tracerProvider?: NodeTracerProvider;
   private _meterProvider?: MeterProvider;
+  private _serviceName?: string;
 
   /**
    * Create a new NodeJS SDK instance
    */
   public constructor(configuration: Partial<NodeSDKConfiguration> = {}) {
     this._resource = configuration.resource ?? new Resource({});
+
+    this._serviceName = configuration.serviceName;
 
     this._autoDetectResources = configuration.autoDetectResources ?? true;
 
@@ -83,20 +87,8 @@ export class NodeSDK {
       );
     }
 
-    if (configuration.metricExporter) {
-      const meterConfig: MeterConfig = {};
-
-      if (configuration.metricProcessor) {
-        meterConfig.processor = configuration.metricProcessor;
-      }
-      if (configuration.metricExporter) {
-        meterConfig.exporter = configuration.metricExporter;
-      }
-      if (typeof configuration.metricInterval === 'number') {
-        meterConfig.interval = configuration.metricInterval;
-      }
-
-      this.configureMeterProvider(meterConfig);
+    if (configuration.metricReader) {
+      this.configureMeterProvider(configuration.metricReader);
     }
 
     let instrumentations: InstrumentationOption[] = [];
@@ -105,6 +97,7 @@ export class NodeSDK {
     }
     this._instrumentations = instrumentations;
   }
+
   /** Set configurations required to register a NodeTracerProvider */
   public configureTracerProvider(
     tracerConfig: NodeTracerConfig,
@@ -121,14 +114,16 @@ export class NodeSDK {
   }
 
   /** Set configurations needed to register a MeterProvider */
-  public configureMeterProvider(config: MeterConfig): void {
-    this._meterProviderConfig = config;
+  public configureMeterProvider(reader: MetricReader): void {
+    this._metricReader = reader;
   }
 
   /** Detect resource attributes */
-  public async detectResources(config?: ResourceDetectionConfig): Promise<void> {
+  public async detectResources(
+    config?: ResourceDetectionConfig
+  ): Promise<void> {
     const internalConfig: ResourceDetectionConfig = {
-      detectors: [awsEc2Detector, gcpDetector, envDetector, processDetector],
+      detectors: [ envDetector, processDetector],
       ...config,
     };
 
@@ -148,6 +143,12 @@ export class NodeSDK {
       await this.detectResources();
     }
 
+    this._resource = this._serviceName === undefined
+      ? this._resource
+      : this._resource.merge(new Resource(
+        {[SemanticResourceAttributes.SERVICE_NAME]: this._serviceName}
+      ));
+
     if (this._tracerProviderConfig) {
       const tracerProvider = new NodeTracerProvider({
         ...this._tracerProviderConfig.tracerConfig,
@@ -163,11 +164,12 @@ export class NodeSDK {
       });
     }
 
-    if (this._meterProviderConfig) {
+    if (this._metricReader) {
       const meterProvider = new MeterProvider({
-        ...this._meterProviderConfig,
         resource: this._resource,
       });
+
+      meterProvider.addMetricReader(this._metricReader);
 
       this._meterProvider = meterProvider;
 
@@ -191,7 +193,8 @@ export class NodeSDK {
     return (
       Promise.all(promises)
         // return void instead of the array from Promise.all
-        .then(() => {})
+        .then(() => {
+        })
     );
   }
 }
