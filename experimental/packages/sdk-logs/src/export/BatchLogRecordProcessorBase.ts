@@ -40,7 +40,7 @@ export abstract class BatchLogRecordProcessorBase<T extends BufferConfig>
   private readonly _exportTimeoutMillis: number;
 
   private _finishedLogRecords: LogRecord[] = [];
-  private _timer: NodeJS.Timeout | undefined;
+  private _timer: number | undefined;
   private _shutdownOnce: BindOnceFuture<void>;
 
   constructor(

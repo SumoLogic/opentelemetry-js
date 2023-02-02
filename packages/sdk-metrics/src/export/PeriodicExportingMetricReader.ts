@@ -55,7 +55,7 @@ export type PeriodicExportingMetricReaderOptions = {
  * the configured {@link PushMetricExporter}
  */
 export class PeriodicExportingMetricReader extends MetricReader {
-  private _interval?: ReturnType<typeof setInterval>;
+  private _interval?: number;
   private _exporter: PushMetricExporter;
   private readonly _exportInterval: number;
   private readonly _exportTimeout: number;
@@ -150,7 +150,7 @@ export class PeriodicExportingMetricReader extends MetricReader {
 
   protected override onInitialized(): void {
     // start running the interval as soon as this reader is initialized and keep handle for shutdown.
-    this._interval = setInterval(() => {
+    this._interval = window.setInterval(() => {
       // this._runOnce never rejects. Using void operator to suppress @typescript-eslint/no-floating-promises.
       void this._runOnce();
     }, this._exportInterval);

@@ -43,7 +43,7 @@ export abstract class BatchSpanProcessorBase<T extends BufferConfig>
 
   private _isExporting = false;
   private _finishedSpans: ReadableSpan[] = [];
-  private _timer: NodeJS.Timeout | undefined;
+  private _timer: number | undefined;
   private _shutdownOnce: BindOnceFuture<void>;
   private _droppedSpansCount: number = 0;
 
@@ -150,7 +150,7 @@ export abstract class BatchSpanProcessorBase<T extends BufferConfig>
    * */
   private _flushAll(): Promise<void> {
     return new Promise((resolve, reject) => {
-      const promises = [];
+      const promises: Promise<void>[] = [];
       // calculate number of batches
       const count = Math.ceil(
         this._finishedSpans.length / this._maxExportBatchSize
@@ -172,7 +172,7 @@ export abstract class BatchSpanProcessorBase<T extends BufferConfig>
       return Promise.resolve();
     }
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
+      const timer = window.setTimeout(() => {
         // don't wait anymore for export, this way the next batch can start
         reject(new Error('Timeout'));
       }, this._exportTimeoutMillis);
@@ -238,7 +238,7 @@ export abstract class BatchSpanProcessorBase<T extends BufferConfig>
       return flush();
     }
     if (this._timer !== undefined) return;
-    this._timer = setTimeout(() => flush(), this._scheduledDelayMillis);
+    this._timer = window.setTimeout(() => flush(), this._scheduledDelayMillis);
     unrefTimer(this._timer);
   }
 
