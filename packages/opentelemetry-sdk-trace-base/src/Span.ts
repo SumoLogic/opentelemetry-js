@@ -213,6 +213,7 @@ export class Span implements APISpan, ReadableSpan {
 
     this.endTime = this._getTime(endTime);
     this._duration = hrTimeDuration(this.startTime, this.endTime);
+    debugger;
 
     if (this._duration[0] < 0) {
       diag.warn(
@@ -228,6 +229,7 @@ export class Span implements APISpan, ReadableSpan {
   }
 
   private _getTime(inp?: TimeInput): HrTime {
+    debugger;
     if (typeof inp === 'number' && inp < otperformance.now()) {
       // must be a performance timestamp
       // apply correction and convert to hrtime
