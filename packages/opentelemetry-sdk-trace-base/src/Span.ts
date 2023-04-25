@@ -213,7 +213,11 @@ export class Span implements APISpan, ReadableSpan {
 
     this.endTime = this._getTime(endTime);
     this._duration = hrTimeDuration(this.startTime, this.endTime);
-    debugger;
+
+    if (this.name === 'documentLoad') {
+      // @ts-ignore
+      window.logOnScreen(Date.now(), new Date(), 'span.end function call, name:', this.name, ' endTime:', endTime, ' this.endTime:', this.endTime, ' this._duration:', this._duration);
+    }
 
     if (this._duration[0] < 0) {
       diag.warn(
@@ -223,38 +227,64 @@ export class Span implements APISpan, ReadableSpan {
       );
       this.endTime = this.startTime.slice() as HrTime;
       this._duration = [0, 0];
+
+      if (this.name === 'documentLoad') {
+        // @ts-ignore
+        window.logOnScreen(Date.now(), new Date(), 'span.end function call, Inconsistent start and end time:', this.name, 'this.endTime:', this.endTime, ' this._duration:', this._duration);
+      }
     }
 
     this._spanProcessor.onEnd(this);
   }
 
   private _getTime(inp?: TimeInput): HrTime {
-    debugger;
     if (typeof inp === 'number' && inp < otperformance.now()) {
       // must be a performance timestamp
       // apply correction and convert to hrtime
+      if (this.name === 'documentLoad') {
+        // @ts-ignore
+        window.logOnScreen(Date.now(), new Date(), 'span.end function call, _getTime 1:', inp, ' otperformance.now():', otperformance.now(), ' this._performanceOffset', this._performanceOffset);
+      }
       return hrTime(inp + this._performanceOffset);
     }
 
     if (typeof inp === 'number') {
+      // @ts-ignore
+      window.logOnScreen(Date.now(), new Date(), 'span.end function call, _getTime 2:', inp, ' millisToHrTime(inp):', millisToHrTime(inp));
       return millisToHrTime(inp);
     }
 
     if (inp instanceof Date) {
+      if (this.name === 'documentLoad') {
+        // @ts-ignore
+        window.logOnScreen(Date.now(), new Date(), 'span.end function call, _getTime 3:', inp, ' millisToHrTime(inp.getTime()):', millisToHrTime(inp.getTime()));
+      }
       return millisToHrTime(inp.getTime());
     }
 
     if (isTimeInputHrTime(inp)) {
+      if (this.name === 'documentLoad') {
+        // @ts-ignore
+        window.logOnScreen(Date.now(), new Date(), 'span.end function call, _getTime 4:', inp);
+      }
       return inp;
     }
 
     if (this._startTimeProvided) {
       // if user provided a time for the start manually
       // we can't use duration to calculate event/end times
+      if (this.name === 'documentLoad') {
+        // @ts-ignore
+        window.logOnScreen(Date.now(), new Date(), 'span.end function call, _getTime 5:', inp, ' millisToHrTime(Date.now())', millisToHrTime(Date.now()));
+      }
       return millisToHrTime(Date.now());
     }
 
     const msDuration = otperformance.now() - this._performanceStartTime;
+    if (this.name === 'documentLoad') {
+      // @ts-ignore
+      window.logOnScreen(Date.now(), new Date(), 'span.end function call, _getTime 6:', inp, ' addHrTimes(this.startTime, millisToHrTime(msDuration))', addHrTimes(this.startTime, millisToHrTime(msDuration)));
+    }
     return addHrTimes(this.startTime, millisToHrTime(msDuration));
   }
 
