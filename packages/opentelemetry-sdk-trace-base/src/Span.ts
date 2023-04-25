@@ -216,7 +216,7 @@ export class Span implements APISpan, ReadableSpan {
 
     if (this.name === 'documentLoad') {
       // @ts-ignore
-      window.logOnScreen(Date.now(), new Date(), 'span.end function call, name:', this.name, ' endTime:', endTime, ' this.endTime:', this.endTime, ' this._duration:', this._duration);
+      window.logOnScreen('Span.ts:219 - end() - name:', this.name, 'endTime:', endTime, 'this.endTime:', this.endTime, 'this._duration:', this._duration);
     }
 
     if (this._duration[0] < 0) {
@@ -230,7 +230,7 @@ export class Span implements APISpan, ReadableSpan {
 
       if (this.name === 'documentLoad') {
         // @ts-ignore
-        window.logOnScreen(Date.now(), new Date(), 'span.end function call, Inconsistent start and end time:', this.name, 'this.endTime:', this.endTime, ' this._duration:', this._duration);
+        window.logOnScreen('Span.ts:233 - end() - Inconsistent start and end time');
       }
     }
 
@@ -243,21 +243,21 @@ export class Span implements APISpan, ReadableSpan {
       // apply correction and convert to hrtime
       if (this.name === 'documentLoad') {
         // @ts-ignore
-        window.logOnScreen(Date.now(), new Date(), 'span.end function call, _getTime 1:', inp, ' otperformance.now():', otperformance.now(), ' this._performanceOffset', this._performanceOffset);
+        window.logOnScreen('Span.ts:246 - end() - _getTime() 1: inp:', inp, 'otperformance.now():', otperformance.now(), ' this._performanceOffset', this._performanceOffset);
       }
       return hrTime(inp + this._performanceOffset);
     }
 
     if (typeof inp === 'number') {
       // @ts-ignore
-      window.logOnScreen(Date.now(), new Date(), 'span.end function call, _getTime 2:', inp, ' millisToHrTime(inp):', millisToHrTime(inp));
+      window.logOnScreen('Span.ts:253 - end() - _getTime() 2: inp:', inp, 'millisToHrTime(inp):', millisToHrTime(inp));
       return millisToHrTime(inp);
     }
 
     if (inp instanceof Date) {
       if (this.name === 'documentLoad') {
         // @ts-ignore
-        window.logOnScreen(Date.now(), new Date(), 'span.end function call, _getTime 3:', inp, ' millisToHrTime(inp.getTime()):', millisToHrTime(inp.getTime()));
+        window.logOnScreen('Span.ts:260 - end() - _getTime() 3: inp:', inp, 'millisToHrTime(inp.getTime()):', millisToHrTime(inp.getTime()));
       }
       return millisToHrTime(inp.getTime());
     }
@@ -265,7 +265,7 @@ export class Span implements APISpan, ReadableSpan {
     if (isTimeInputHrTime(inp)) {
       if (this.name === 'documentLoad') {
         // @ts-ignore
-        window.logOnScreen(Date.now(), new Date(), 'span.end function call, _getTime 4:', inp);
+        window.logOnScreen('Span.ts:268 - end() - _getTime() 4: inp:', inp);
       }
       return inp;
     }
@@ -275,7 +275,7 @@ export class Span implements APISpan, ReadableSpan {
       // we can't use duration to calculate event/end times
       if (this.name === 'documentLoad') {
         // @ts-ignore
-        window.logOnScreen(Date.now(), new Date(), 'span.end function call, _getTime 5:', inp, ' millisToHrTime(Date.now())', millisToHrTime(Date.now()));
+        window.logOnScreen('Span.ts:253 - end() - _getTime() 5: inp:', inp, 'millisToHrTime(Date.now()):', millisToHrTime(Date.now()));
       }
       return millisToHrTime(Date.now());
     }
