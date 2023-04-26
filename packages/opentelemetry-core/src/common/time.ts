@@ -55,7 +55,9 @@ export function hrTime(performanceNow?: number): api.HrTime {
     typeof performanceNow === 'number' ? performanceNow : performance.now()
   );
 
+  // @ts-ignore
   if (window.logOnScreen) {
+    // @ts-ignore
     window.logOnScreen('time.ts:59 - timeOrigin', timeOrigin, 'hrTimeToTimeStamp(timeOrigin)', hrTimeToTimeStamp(timeOrigin), 'typeof performanceNow', typeof performanceNow === 'number', 'now', now, 'hrTimeToTimeStamp(now)', hrTimeToTimeStamp(now));
   }
 
