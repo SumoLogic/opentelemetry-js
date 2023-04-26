@@ -35,6 +35,7 @@ import {
   getTimeOrigin,
   hrTime,
   hrTimeDuration,
+  hrTimeToTimeStamp,
   InstrumentationLibrary,
   isAttributeValue,
   isTimeInput,
@@ -216,7 +217,7 @@ export class Span implements APISpan, ReadableSpan {
 
     if (this.name === 'documentLoad') {
       // @ts-ignore
-      window.logOnScreen('Span.ts:219 - end() - name:', this.name, 'endTime:', endTime, 'this.endTime:', this.endTime, 'this._duration:', this._duration);
+      window.logOnScreen('Span.ts:219 - end() - name:', this.name, 'this.startTime', this.startTime, 'endTime:', endTime, 'this.endTime:', this.endTime, 'this._duration:', this._duration, 'hrTimeToTimeStamp(this.startTime)', hrTimeToTimeStamp(this.startTime), 'hrTimeToTimeStamp(this.endTime)', hrTimeToTimeStamp(this.endTime));
     }
 
     if (this._duration[0] < 0) {
@@ -243,7 +244,7 @@ export class Span implements APISpan, ReadableSpan {
       // apply correction and convert to hrtime
       if (this.name === 'documentLoad') {
         // @ts-ignore
-        window.logOnScreen('Span.ts:246 - end() - _getTime() 1: inp:', inp, 'otperformance.now():', otperformance.now(), ' this._performanceOffset', this._performanceOffset);
+        window.logOnScreen('Span.ts:246 - end() - _getTime() 1: inp:', inp, 'otperformance.now():', otperformance.now(), ' this._performanceOffset', this._performanceOffset, 'inp + this._performanceOffset', inp + this._performanceOffset, 'typeof inp + this._performanceOffset', typeof (inp + this._performanceOffset));
       }
       return hrTime(inp + this._performanceOffset);
     }
