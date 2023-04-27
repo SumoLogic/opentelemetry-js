@@ -217,7 +217,7 @@ export class Span implements APISpan, ReadableSpan {
 
     if (this.name === 'documentLoad') {
       // @ts-ignore
-      window.logOnScreen('Span.ts:219 - end() - name:', this.name, 'this.startTime', this.startTime, 'endTime:', endTime, 'this.endTime:', this.endTime, 'this._duration:', this._duration, 'hrTimeToTimeStamp(this.startTime)', hrTimeToTimeStamp(this.startTime), 'hrTimeToTimeStamp(this.endTime)', hrTimeToTimeStamp(this.endTime));
+      window.logOnScreen('Span.ts:220 - end() - name:', this.name, 'this.startTime', this.startTime, 'endTime:', endTime, 'this.endTime:', this.endTime, 'this._duration:', this._duration, 'hrTimeToTimeStamp(this.startTime)', hrTimeToTimeStamp(this.startTime), 'hrTimeToTimeStamp(this.endTime)', hrTimeToTimeStamp(this.endTime));
     }
 
     if (this._duration[0] < 0) {
@@ -231,7 +231,7 @@ export class Span implements APISpan, ReadableSpan {
 
       if (this.name === 'documentLoad') {
         // @ts-ignore
-        window.logOnScreen('Span.ts:233 - end() - Inconsistent start and end time');
+        window.logOnScreen('Span.ts:234 - end() - Inconsistent start and end time');
       }
     }
 
@@ -244,21 +244,21 @@ export class Span implements APISpan, ReadableSpan {
       // apply correction and convert to hrtime
       if (this.name === 'documentLoad') {
         // @ts-ignore
-        window.logOnScreen('Span.ts:246 - end() - _getTime() 1: inp:', inp, 'otperformance.now():', otperformance.now(), ' this._performanceOffset', this._performanceOffset, 'inp + this._performanceOffset', inp + this._performanceOffset, 'typeof inp + this._performanceOffset', typeof (inp + this._performanceOffset));
+        window.logOnScreen('Span.ts:247 - end() - _getTime() 1: inp:', inp, 'otperformance.now():', otperformance.now(), ' this._performanceOffset', this._performanceOffset, 'inp + this._performanceOffset', inp + this._performanceOffset, 'typeof inp + this._performanceOffset', typeof (inp + this._performanceOffset));
       }
       return hrTime(inp + this._performanceOffset);
     }
 
     if (typeof inp === 'number') {
       // @ts-ignore
-      window.logOnScreen('Span.ts:253 - end() - _getTime() 2: inp:', inp, 'millisToHrTime(inp):', millisToHrTime(inp));
+      window.logOnScreen('Span.ts:254 - end() - _getTime() 2: inp:', inp, 'millisToHrTime(inp):', millisToHrTime(inp));
       return millisToHrTime(inp);
     }
 
     if (inp instanceof Date) {
       if (this.name === 'documentLoad') {
         // @ts-ignore
-        window.logOnScreen('Span.ts:260 - end() - _getTime() 3: inp:', inp, 'millisToHrTime(inp.getTime()):', millisToHrTime(inp.getTime()));
+        window.logOnScreen('Span.ts:261 - end() - _getTime() 3: inp:', inp, 'millisToHrTime(inp.getTime()):', millisToHrTime(inp.getTime()));
       }
       return millisToHrTime(inp.getTime());
     }
@@ -266,7 +266,7 @@ export class Span implements APISpan, ReadableSpan {
     if (isTimeInputHrTime(inp)) {
       if (this.name === 'documentLoad') {
         // @ts-ignore
-        window.logOnScreen('Span.ts:268 - end() - _getTime() 4: inp:', inp);
+        window.logOnScreen('Span.ts:269 - end() - _getTime() 4: inp:', inp);
       }
       return inp;
     }
@@ -276,7 +276,7 @@ export class Span implements APISpan, ReadableSpan {
       // we can't use duration to calculate event/end times
       if (this.name === 'documentLoad') {
         // @ts-ignore
-        window.logOnScreen('Span.ts:253 - end() - _getTime() 5: inp:', inp, 'millisToHrTime(Date.now()):', millisToHrTime(Date.now()));
+        window.logOnScreen('Span.ts:279 - end() - _getTime() 5: inp:', inp, 'millisToHrTime(Date.now()):', millisToHrTime(Date.now()));
       }
       return millisToHrTime(Date.now());
     }
@@ -284,7 +284,7 @@ export class Span implements APISpan, ReadableSpan {
     const msDuration = otperformance.now() - this._performanceStartTime;
     if (this.name === 'documentLoad') {
       // @ts-ignore
-      window.logOnScreen(Date.now(), new Date(), 'span.end function call, _getTime 6:', inp, ' addHrTimes(this.startTime, millisToHrTime(msDuration))', addHrTimes(this.startTime, millisToHrTime(msDuration)));
+      window.logOnScreen('Span.ts:287 - end() - _getTime() 6:', inp, ' addHrTimes(this.startTime, millisToHrTime(msDuration))', addHrTimes(this.startTime, millisToHrTime(msDuration)));
     }
     return addHrTimes(this.startTime, millisToHrTime(msDuration));
   }
