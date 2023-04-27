@@ -23,6 +23,8 @@ const NANOSECOND_DIGITS_IN_MILLIS = 6;
 const MILLISECONDS_TO_NANOSECONDS = Math.pow(10, NANOSECOND_DIGITS_IN_MILLIS);
 const SECOND_TO_NANOSECONDS = Math.pow(10, NANOSECOND_DIGITS);
 
+const TIME_ORIGIN = performance.timeOrigin;
+
 /**
  * Converts a number of milliseconds from epoch to HrTime([seconds, remainder in nanoseconds]).
  * @param epochMillis
@@ -37,12 +39,11 @@ export function millisToHrTime(epochMillis: number): api.HrTime {
 }
 
 export function getTimeOrigin(): number {
-  let timeOrigin = performance.timeOrigin;
-  if (typeof timeOrigin !== 'number') {
+  if (typeof TIME_ORIGIN !== 'number') {
     const perf: TimeOriginLegacy = performance as unknown as TimeOriginLegacy;
-    timeOrigin = perf.timing && perf.timing.fetchStart;
+    return perf.timing && perf.timing.fetchStart;
   }
-  return timeOrigin;
+  return TIME_ORIGIN;
 }
 
 /**
