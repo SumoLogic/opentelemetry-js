@@ -106,7 +106,7 @@ export abstract class BatchLogRecordProcessorBase<T extends BufferConfig>
    * */
   private _flushAll(): Promise<void> {
     return new Promise((resolve, reject) => {
-      const promises = [];
+      const promises: Promise<void>[] = [];
       const batchCount = Math.ceil(
         this._finishedLogRecords.length / this._maxExportBatchSize
       );
@@ -142,7 +142,7 @@ export abstract class BatchLogRecordProcessorBase<T extends BufferConfig>
     if (this._timer !== undefined) {
       return;
     }
-    this._timer = setTimeout(() => {
+    this._timer = window.setTimeout(() => {
       this._flushOneBatch()
         .then(() => {
           if (this._finishedLogRecords.length > 0) {
